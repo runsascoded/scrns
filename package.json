@@ -1,0 +1,47 @@
+{
+  "name": "@rdub/screenshots",
+  "version": "0.1.0",
+  "description": "Automated screenshots with Puppeteer - wait for selectors, configurable viewports, CLI",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "bin": {
+    "screenshots": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "keywords": [
+    "puppeteer",
+    "screenshots",
+    "automation",
+    "cli",
+    "testing"
+  ],
+  "author": "Ryan Williams",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/runsascoded/screenshots"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "puppeteer": "^23.11.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  }
+}
