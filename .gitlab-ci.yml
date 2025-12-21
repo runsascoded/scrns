@@ -1,6 +1,12 @@
+include:
+  - project: 'runsascoded/js/gl-pnpm-dist'
+    file: '/dist.gitlab-ci.yml'
+
 image: node:latest
 stages:
   - deploy
+
+# NPM publishing (on version tags)
 deploy_npm:
   stage: deploy
   rules:
@@ -13,3 +19,6 @@ deploy_npm:
     - pnpm run build
     - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> .npmrc
     - npm publish --access public
+
+# Dist branch (manual trigger or version tags)
+# Inherited from gl-pnpm-dist via include
