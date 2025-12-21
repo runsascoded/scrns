@@ -1,5 +1,5 @@
 include:
-  - project: 'runsascoded/js/gl-pnpm-dist'
+  - project: 'runsascoded/js/pnpm-dist'
     file: '/dist.gitlab-ci.yml'
 
 image: node:latest
@@ -21,4 +21,4 @@ deploy_npm:
     - npm publish --access public
 
 # Dist branch (manual trigger or version tags)
-# Inherited from gl-pnpm-dist via include
+# Inherited from pnpm-dist via include
