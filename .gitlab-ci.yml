@@ -2,7 +2,7 @@ include:
   - project: 'runsascoded/js/pnpm-dist'
     file: '/dist.gitlab-ci.yml'
 
-image: node:latest
+image: node:22
 stages:
   - deploy
 
@@ -12,8 +12,7 @@ deploy_npm:
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
   before_script:
-    - corepack enable
-    - corepack prepare pnpm@latest-9 --activate
+    - npm install -g pnpm@9
   script:
     - pnpm install
     - pnpm run build
