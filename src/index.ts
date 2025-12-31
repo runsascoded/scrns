@@ -13,6 +13,12 @@ export type ScreenshotConfig = {
   loadTimeout?: number
   /** Sleep in ms before taking screenshot (default: 0) */
   preScreenshotSleep?: number
+  /** Scroll Y pixels before screenshot (default: 0) */
+  scrollY?: number
+  /** CSS selector to scroll into view before screenshot */
+  scrollTo?: string
+  /** Offset in pixels above the scrollTo element (positive = more space above) */
+  scrollOffset?: number
   /** If true, set download behavior instead of taking screenshot */
   download?: boolean
   /** Sleep in ms while waiting for download (default: 1000) */
@@ -77,6 +83,9 @@ export async function takeScreenshots(
         selector = defaultSelector,
         loadTimeout = defaultLoadTimeout,
         preScreenshotSleep = 0,
+        scrollY = 0,
+        scrollTo,
+        scrollOffset = 0,
         download = false,
         downloadSleep = defaultDownloadSleep,
       } = config
@@ -103,6 +112,25 @@ export async function takeScreenshots(
       if (selector) {
         await page.waitForSelector(selector, { timeout: loadTimeout })
         log(`Found selector: ${selector}`)
+      }
+
+      if (scrollTo) {
+        const scrolled = await page.evaluate((sel, offset) => {
+          const el = document.querySelector(sel)
+          if (!el) return null
+          const rect = el.getBoundingClientRect()
+          const y = window.scrollY + rect.top - offset
+          window.scrollTo(0, y)
+          return y
+        }, scrollTo, scrollOffset)
+        if (scrolled !== null) {
+          log(`Scrolled to ${scrollTo} at Y: ${scrolled}`)
+        } else {
+          log(`Warning: scrollTo selector "${scrollTo}" not found`)
+        }
+      } else if (scrollY > 0) {
+        await page.evaluate((y) => window.scrollTo(0, y), scrollY)
+        log(`Scrolled to Y: ${scrollY}`)
       }
 
       if (preScreenshotSleep > 0) {

@@ -1,14 +1,20 @@
 #!/usr/bin/env node
 
 import { program } from 'commander'
-import { readFileSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { takeScreenshots, ScreenshotsMap } from './index.js'
+
+const DEFAULT_CONFIGS = [
+  'screenshots.config.ts',
+  'screenshots.config.js',
+  'screenshots.config.json',
+]
 
 program
   .name('screenshots')
   .description('Take automated screenshots with Puppeteer')
-  .requiredOption('-c, --config <path>', 'Path to screenshots config file (JSON or JS/TS)')
+  .option('-c, --config <path>', 'Path to screenshots config file (default: screenshots.config.{ts,js,json})')
   .option('-d, --download-sleep <ms>', 'Sleep while waiting for downloads (default: 1000)', parseInt)
   .option('-h, --host <host>', 'Hostname or port (numeric port maps to 127.0.0.1:port)')
   .option('-i, --include <regex>', 'Only generate screenshots matching this regex')
@@ -20,6 +26,19 @@ program
 
 const opts = program.opts()
 
+function findConfig(): string {
+  if (opts.config) {
+    return resolve(opts.config)
+  }
+  for (const name of DEFAULT_CONFIGS) {
+    const path = resolve(name)
+    if (existsSync(path)) {
+      return path
+    }
+  }
+  throw new Error(`No config file found. Tried: ${DEFAULT_CONFIGS.join(', ')}`)
+}
+
 async function main() {
   // Parse host
   let host = opts.host || '127.0.0.1:3000'
@@ -30,7 +49,8 @@ async function main() {
   const baseUrl = `${scheme}://${host}`
 
   // Load config
-  const configPath = resolve(opts.config)
+  const configPath = findConfig()
+  console.log(`Using config: ${configPath}`)
   let screens: ScreenshotsMap
 
   if (configPath.endsWith('.json')) {
