@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>scrns test fixture</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+    }
+    .header {
+      background: #2563eb;
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+    .content {
+      padding: 20px;
+      min-height: 400px;
+    }
+    .content p {
+      margin: 10px 0;
+    }
+    .spacer {
+      height: 600px;
+      background: linear-gradient(to bottom, #f0f0f0, #e0e0e0);
+    }
+    .footer {
+      background: #1f2937;
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+    #loaded {
+      color: green;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Test Page</h1>
+  </div>
+  <div class="content">
+    <p id="loaded">Page loaded successfully</p>
+    <p>This is test content for the scrns e2e test.</p>
+    <p>It includes various elements to verify screenshot functionality.</p>
+  </div>
+  <div class="spacer"></div>
+  <div class="footer" id="footer">
+    Footer content - scroll test target
+  </div>
+</body>
+</html>

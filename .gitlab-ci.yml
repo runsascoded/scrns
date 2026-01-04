@@ -4,17 +4,29 @@ include:
 
 image: node:22
 stages:
+  - test
   - deploy
+
+.pnpm_setup:
+  before_script:
+    - npm install -g pnpm@9
+    - pnpm install
+
+# Run tests on all branches
+test:
+  stage: test
+  extends: .pnpm_setup
+  script:
+    - pnpm test
 
 # NPM publishing (on version tags)
 deploy_npm:
   stage: deploy
+  extends: .pnpm_setup
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
-  before_script:
-    - npm install -g pnpm@9
   script:
-    - pnpm install
+    - pnpm test
     - pnpm run build
     - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> .npmrc
     - npm publish --access public
