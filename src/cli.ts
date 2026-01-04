@@ -6,15 +6,15 @@ import { resolve } from 'path'
 import { takeScreenshots, ScreenshotsMap } from './index.js'
 
 const DEFAULT_CONFIGS = [
-  'screenshots.config.ts',
-  'screenshots.config.js',
-  'screenshots.config.json',
+  'scrns.config.ts',
+  'scrns.config.js',
+  'scrns.config.json',
 ]
 
 program
-  .name('screenshots')
+  .name('scrns')
   .description('Take automated screenshots with Puppeteer')
-  .option('-c, --config <path>', 'Path to screenshots config file (default: screenshots.config.{ts,js,json})')
+  .option('-c, --config <path>', 'Path to config file (default: scrns.config.{ts,js,json})')
   .option('-d, --download-sleep <ms>', 'Sleep while waiting for downloads (default: 1000)', parseInt)
   .option('-h, --host <host>', 'Hostname or port (numeric port maps to 127.0.0.1:port)')
   .option('-i, --include <regex>', 'Only generate screenshots matching this regex')

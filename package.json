@@ -1,6 +1,6 @@
 {
-  "name": "@rdub/screenshots",
-  "version": "0.2.0",
+  "name": "scrns",
+  "version": "0.2.1",
   "description": "Automated screenshots with Puppeteer - wait for selectors, configurable viewports, CLI",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -14,7 +14,7 @@
     }
   },
   "bin": {
-    "screenshots": "./dist/cli.js"
+    "scrns": "./dist/cli.js"
   },
   "files": [
     "dist"

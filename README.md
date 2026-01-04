@@ -1,4 +1,4 @@
-# @rdub/screenshots
+# scrns
 
 [![npm version][npm-badge]][npm]
 
@@ -6,20 +6,20 @@ Automated screenshots with Puppeteer - wait for selectors, configurable viewport
 
 ## Install
 ```bash
-pnpm add @rdub/screenshots
+pnpm add scrns
 # or
-npm install @rdub/screenshots
+npm install scrns
 ```
 
 ## CLI Usage
 ```bash
-screenshots [options]
+scrns [options]
 ```
 
 ### Options
 | Flag | Description |
 |------|-------------|
-| `-c, --config <path>` | Config file path (default: `screenshots.config.{ts,js,json}`) |
+| `-c, --config <path>` | Config file path (default: `scrns.config.{ts,js,json}`) |
 | `-d, --download-sleep <ms>` | Sleep while waiting for downloads (default: 1000) |
 | `-h, --host <host>` | Hostname or port (numeric port maps to `127.0.0.1:port`) |
 | `-i, --include <regex>` | Only generate screenshots matching this regex |
@@ -31,18 +31,18 @@ screenshots [options]
 ### Example
 ```bash
 # Auto-detect config, use localhost:3000
-screenshots
+scrns
 
 # Specify port and config
-screenshots -h 8080 -c my-config.ts
+scrns -h 8080 -c my-config.ts
 
 # Filter to specific screenshots
-screenshots -i "home|about"
+scrns -i "home|about"
 ```
 
 ## Config File
 
-Create `screenshots.config.ts` (or `.js`/`.json`):
+Create `scrns.config.ts` (or `.js`/`.json`):
 
 ```typescript
 export default {
@@ -82,7 +82,7 @@ export default {
 ## Programmatic Usage
 
 ```typescript
-import { takeScreenshots } from '@rdub/screenshots'
+import { takeScreenshots } from 'scrns'
 
 await takeScreenshots({
   'home': { query: '' },
@@ -97,5 +97,5 @@ await takeScreenshots({
 ```
 
 [GitLab]: https://gitlab.com/runsascoded/js/screenshots
-[npm]: https://www.npmjs.com/package/@rdub/screenshots
-[npm-badge]: https://img.shields.io/npm/v/@rdub/screenshots.svg
+[npm]: https://www.npmjs.com/package/scrns
+[npm-badge]: https://img.shields.io/npm/v/scrns.svg
