@@ -96,6 +96,6 @@ await takeScreenshots({
 })
 ```
 
-[GitLab]: https://gitlab.com/runsascoded/js/screenshots
+[GitLab]: https://gitlab.com/runsascoded/js/scrns
 [npm]: https://www.npmjs.com/package/scrns
 [npm-badge]: https://img.shields.io/npm/v/scrns.svg

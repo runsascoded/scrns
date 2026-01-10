@@ -35,7 +35,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://gitlab.com/runsascoded/js/screenshots"
+    "url": "https://gitlab.com/runsascoded/js/scrns"
   },
   "dependencies": {
     "commander": "^12.1.0",
