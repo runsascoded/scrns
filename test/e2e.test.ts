@@ -120,4 +120,19 @@ describe('scrns e2e', () => {
     expect(existsSync(resolve(TEST_DIR, 'included.png'))).toBe(true)
     expect(existsSync(resolve(TEST_DIR, 'excluded.png'))).toBe(false)
   })
+
+  it('uses custom path when specified', async () => {
+    await takeScreenshots({
+      'custom': {
+        query: 'fixture.html',
+        path: 'subdir/custom-name.png',
+      },
+    }, {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: TEST_DIR,
+      log: () => {},
+    })
+
+    expect(existsSync(resolve(TEST_DIR, 'subdir/custom-name.png'))).toBe(true)
+  })
 })

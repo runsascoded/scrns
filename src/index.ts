@@ -1,6 +1,10 @@
 import puppeteer, { Browser, Page } from 'puppeteer'
+import { isAbsolute, dirname, resolve } from 'path'
+import { mkdirSync } from 'fs'
 
 export type ScreenshotConfig = {
+  /** Output path (relative to outputDir, or absolute). Defaults to `{name}.png` */
+  path?: string
   /** URL path/query (appended to baseUrl) */
   query?: string
   /** Viewport width (default: 800) */
@@ -77,6 +81,7 @@ export async function takeScreenshots(
       }
 
       const {
+        path: configPath,
         query = '',
         width = DEFAULT_WIDTH,
         height = DEFAULT_HEIGHT,
@@ -91,7 +96,13 @@ export async function takeScreenshots(
       } = config
 
       const url = `${baseUrl}/${query}`
-      const path = `${outputDir}/${name}.png`
+      const defaultPath = `${name}.png`
+      const path = configPath
+        ? (isAbsolute(configPath) ? configPath : resolve(outputDir, configPath))
+        : resolve(outputDir, defaultPath)
+
+      // Ensure output directory exists
+      mkdirSync(dirname(path), { recursive: true })
 
       if (download) {
         log(`Setting download behavior to ${outputDir}`)

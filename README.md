@@ -67,6 +67,7 @@ export default {
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
+| `path` | `string` | `{name}.png` | Output path (relative to outputDir, or absolute) |
 | `query` | `string` | `''` | URL path/query (appended to baseUrl) |
 | `width` | `number` | `800` | Viewport width |
 | `height` | `number` | `560` | Viewport height |
