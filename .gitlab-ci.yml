@@ -1,5 +1,5 @@
 include:
-  - project: 'runsascoded/js/pnpm-dist'
+  - project: 'runsascoded/js/npm-dist'
     file: '/dist.gitlab-ci.yml'
 
 image: node:22
@@ -41,5 +41,10 @@ deploy_npm:
     - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> .npmrc
     - npm publish --access public
 
-# Dist branch (manual trigger or version tags)
-# Inherited from pnpm-dist via include
+# Build dist branch automatically on main pushes
+build_dist:
+  extends: .build-dist
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: always
