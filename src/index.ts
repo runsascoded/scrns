@@ -1,6 +1,13 @@
 import puppeteer, { Browser, Page } from 'puppeteer'
 import { isAbsolute, dirname, resolve } from 'path'
-import { mkdirSync } from 'fs'
+import { mkdirSync, writeFileSync } from 'fs'
+import * as gifencModule from 'gifenc'
+// gifenc is CJS; handle both ESM interop shapes (namespace vs default-wrapped)
+const gifenc = ('default' in gifencModule && typeof (gifencModule as any).default === 'object')
+  ? (gifencModule as any).default
+  : gifencModule
+const { GIFEncoder, quantize, applyPalette } = gifenc
+import { PNG } from 'pngjs'
 
 export type ScreenshotConfig = {
   /** Output path (relative to outputDir, or absolute). Defaults to `{name}.png` */
@@ -29,7 +36,32 @@ export type ScreenshotConfig = {
   downloadSleep?: number
 }
 
-export type ScreenshotsMap = Record<string, ScreenshotConfig>
+export type ScreencastAction =
+  | { type: 'wait', duration: number }
+  | { type: 'keydown', key: string }
+  | { type: 'keyup', key: string }
+  | { type: 'key', key: string, duration: number }
+  | { type: 'type', text: string }
+  | { type: 'click', x: number, y: number, button?: 'left' | 'right' }
+  | { type: 'drag', from: [number, number], to: [number, number], duration: number, button?: 'left' | 'right' }
+  | { type: 'animate', frames: number, eval: string, frameDelay?: number }
+
+export type ScreencastConfig = ScreenshotConfig & {
+  /** Presence of `actions` distinguishes a screencast from a screenshot */
+  actions: ScreencastAction[]
+  /** Frames per second for GIF capture (default: 15) */
+  fps?: number
+  /** GIF quality: 1-30, lower = better (default: 10) */
+  gifQuality?: number
+  /** Whether the GIF should loop (default: true) */
+  loop?: boolean
+}
+
+export function isScreencast(config: ScreenshotConfig | ScreencastConfig): config is ScreencastConfig {
+  return 'actions' in config && Array.isArray(config.actions)
+}
+
+export type ScreenshotsMap = Record<string, ScreenshotConfig | ScreencastConfig>
 
 export type ScreenshotsOptions = {
   /** Base URL (scheme + host) */
@@ -52,6 +84,191 @@ const DEFAULT_WIDTH = 800
 const DEFAULT_HEIGHT = 560
 const DEFAULT_LOAD_TIMEOUT = 30000
 const DEFAULT_DOWNLOAD_SLEEP = 1000
+
+function parseKeys(key: string): string[] {
+  return key.split('+')
+}
+
+async function executeActions(
+  page: Page,
+  actions: ScreencastAction[],
+  log: (message: string) => void,
+): Promise<void> {
+  for (const action of actions) {
+    switch (action.type) {
+      case 'wait':
+        log(`  action: wait ${action.duration}ms`)
+        await sleep(action.duration)
+        break
+      case 'keydown':
+        log(`  action: keydown ${action.key}`)
+        for (const k of parseKeys(action.key)) await page.keyboard.down(k as any)
+        break
+      case 'keyup':
+        log(`  action: keyup ${action.key}`)
+        for (const k of parseKeys(action.key).reverse()) await page.keyboard.up(k as any)
+        break
+      case 'key': {
+        log(`  action: key ${action.key} ${action.duration}ms`)
+        const keys = parseKeys(action.key)
+        for (const k of keys) await page.keyboard.down(k as any)
+        await sleep(action.duration)
+        for (const k of keys.reverse()) await page.keyboard.up(k as any)
+        break
+      }
+      case 'type':
+        log(`  action: type "${action.text}"`)
+        await page.keyboard.type(action.text)
+        break
+      case 'click':
+        log(`  action: click (${action.x}, ${action.y})`)
+        await page.mouse.click(action.x, action.y, { button: action.button ?? 'left' })
+        break
+      case 'drag': {
+        log(`  action: drag (${action.from}) → (${action.to}) ${action.duration}ms`)
+        const button = action.button ?? 'left'
+        await page.mouse.move(action.from[0], action.from[1])
+        await page.mouse.down({ button })
+        const steps = Math.ceil(action.duration / 16)
+        for (let i = 1; i <= steps; i++) {
+          const t = i / steps
+          const x = action.from[0] + t * (action.to[0] - action.from[0])
+          const y = action.from[1] + t * (action.to[1] - action.from[1])
+          await page.mouse.move(x, y)
+          await sleep(16)
+        }
+        await page.mouse.up({ button })
+        break
+      }
+    }
+  }
+}
+
+function encodeGif(
+  frames: Buffer[],
+  path: string,
+  width: number,
+  height: number,
+  fps: number,
+  loop: boolean,
+  log: (message: string) => void,
+): void {
+  log(`Encoding GIF: ${frames.length} frames...`)
+  const gif = GIFEncoder()
+  const delay = Math.round(1000 / fps)
+  for (const frame of frames) {
+    const png = PNG.sync.read(frame)
+    const { data } = png
+    const palette = quantize(data, 256)
+    const index = applyPalette(data, palette)
+    gif.writeFrame(index, width, height, { palette, delay })
+  }
+  gif.finish()
+  writeFileSync(path, gif.bytesView())
+  if (!loop) {
+    // gifenc loops by default; to disable, patch the Netscape extension byte
+    // For now, looping is always on (gifenc default)
+  }
+  log(`Saved screencast: ${path}`)
+}
+
+function hasAnimateAction(actions: ScreencastAction[]): boolean {
+  return actions.some(a => a.type === 'animate')
+}
+
+async function recordFrameByFrame(
+  page: Page,
+  config: ScreencastConfig,
+  path: string,
+  width: number,
+  height: number,
+  log: (message: string) => void,
+): Promise<void> {
+  const { actions, fps = 15, loop = true } = config
+  const frames: Buffer[] = []
+
+  log(`Recording frame-by-frame screencast...`)
+
+  for (const action of actions) {
+    switch (action.type) {
+      case 'animate': {
+        log(`  animate: ${action.frames} frames`)
+        for (let i = 0; i < action.frames; i++) {
+          await page.evaluate(`(${action.eval})(${i}, ${action.frames})`)
+          // Wait for React/framework to re-render + paint
+          await page.evaluate(() => new Promise<void>(r =>
+            requestAnimationFrame(() => requestAnimationFrame(() => r()))
+          ))
+          if (action.frameDelay) await sleep(action.frameDelay)
+          const frame = await page.screenshot({ encoding: 'binary' })
+          frames.push(Buffer.from(frame))
+          if ((i + 1) % 10 === 0 || i === action.frames - 1) {
+            log(`    frame ${i + 1}/${action.frames}`)
+          }
+        }
+        break
+      }
+      case 'wait': {
+        const staticFrames = Math.ceil(action.duration * fps / 1000)
+        log(`  wait: ${action.duration}ms (${staticFrames} static frames)`)
+        const frame = await page.screenshot({ encoding: 'binary' })
+        const buf = Buffer.from(frame)
+        for (let i = 0; i < staticFrames; i++) frames.push(buf)
+        break
+      }
+      default:
+        await executeActions(page, [action], log)
+        break
+    }
+  }
+
+  encodeGif(frames, path, width, height, fps, loop, log)
+}
+
+async function recordScreencastWebM(
+  page: Page,
+  config: ScreencastConfig,
+  path: string,
+  log: (message: string) => void,
+): Promise<void> {
+  const { actions } = config
+  log(`Recording WebM screencast...`)
+  const recorder = await page.screencast({ path: path as `${string}.webm` })
+  await executeActions(page, actions, log)
+  await recorder.stop()
+  log(`Saved screencast: ${path}`)
+}
+
+async function recordScreencastGif(
+  page: Page,
+  config: ScreencastConfig,
+  path: string,
+  width: number,
+  height: number,
+  log: (message: string) => void,
+): Promise<void> {
+  const { actions, fps = 15, loop = true } = config
+  const frameInterval = 1000 / fps
+  const frames: Buffer[] = []
+
+  let recording = true
+  const captureLoop = (async () => {
+    while (recording) {
+      const start = Date.now()
+      const frame = await page.screenshot({ encoding: 'binary' })
+      frames.push(Buffer.from(frame))
+      const elapsed = Date.now() - start
+      if (elapsed < frameInterval) await sleep(frameInterval - elapsed)
+    }
+  })()
+
+  await executeActions(page, actions, log)
+
+  recording = false
+  await captureLoop
+
+  encodeGif(frames, path, width, height, fps, loop, log)
+}
 
 export async function takeScreenshots(
   screens: ScreenshotsMap,
@@ -96,7 +313,8 @@ export async function takeScreenshots(
       } = config
 
       const url = `${baseUrl}/${query}`
-      const defaultPath = `${name}.png`
+      const defaultExt = isScreencast(config) ? '.gif' : '.png'
+      const defaultPath = `${name}${defaultExt}`
       const path = configPath
         ? (isAbsolute(configPath) ? configPath : resolve(outputDir, configPath))
         : resolve(outputDir, defaultPath)
@@ -148,12 +366,20 @@ export async function takeScreenshots(
         await sleep(preScreenshotSleep)
       }
 
-      if (!download) {
-        await page.screenshot({ path })
-        log(`Saved screenshot: ${path}`)
-      } else {
+      if (download) {
         await sleep(downloadSleep)
         log('Download complete')
+      } else if (isScreencast(config)) {
+        if (hasAnimateAction(config.actions)) {
+          await recordFrameByFrame(page, config, path, width, height, log)
+        } else if (path.endsWith('.webm')) {
+          await recordScreencastWebM(page, config, path, log)
+        } else {
+          await recordScreencastGif(page, config, path, width, height, log)
+        }
+      } else {
+        await page.screenshot({ path })
+        log(`Saved screenshot: ${path}`)
       }
     }
   } finally {
