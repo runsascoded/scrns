@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { takeScreenshots, ScreencastConfig } from '../src/index.js'
+import { takeScreenshots, ScreencastConfig, Screens, Config, parseConfig, resolveBaseUrl } from '../src/index.js'
 import { spawn, ChildProcess } from 'child_process'
 import { existsSync, rmSync, mkdirSync, readFileSync } from 'fs'
 import { resolve } from 'path'
@@ -181,6 +181,57 @@ describe('scrns e2e', () => {
     })
 
     expect(existsSync(resolve(TEST_DIR, 'subdir/custom-name.png'))).toBe(true)
+  })
+})
+
+describe('resolveBaseUrl', () => {
+  it('defaults to 127.0.0.1:3000 with no args', () => {
+    expect(resolveBaseUrl()).toBe('http://127.0.0.1:3000')
+  })
+  it('maps a numeric port to 127.0.0.1:{port}', () => {
+    expect(resolveBaseUrl(5180)).toBe('http://127.0.0.1:5180')
+  })
+  it('maps a string port to 127.0.0.1:{port}', () => {
+    expect(resolveBaseUrl('8080')).toBe('http://127.0.0.1:8080')
+  })
+  it('preserves a full host string', () => {
+    expect(resolveBaseUrl('myhost:4000')).toBe('http://myhost:4000')
+  })
+  it('uses https when flag is set', () => {
+    expect(resolveBaseUrl(443, true)).toBe('https://127.0.0.1:443')
+  })
+})
+
+describe('parseConfig', () => {
+  it('passes flat Screens map through unchanged', () => {
+    const flat: Screens = {
+      home: { query: '', width: 800 },
+      about: { query: 'about' },
+    }
+    const { screens, options } = parseConfig(flat)
+    expect(screens).toBe(flat)
+    expect(options).toEqual({})
+  })
+  it('separates Config options from screenshots', () => {
+    const config: Config = {
+      host: 5180,
+      output: 'public/img',
+      selector: '.app',
+      screenshots: {
+        home: { query: '' },
+      },
+    }
+    const { screens, options } = parseConfig(config)
+    expect(screens).toEqual({ home: { query: '' } })
+    expect(options).toEqual({ host: 5180, output: 'public/img', selector: '.app' })
+  })
+  it('does not misinterpret a screenshot entry with query as Config', () => {
+    const flat: Screens = {
+      screenshots: { query: 'screenshots-page', width: 1200 },
+    }
+    const { screens, options } = parseConfig(flat)
+    expect(screens).toBe(flat)
+    expect(options).toEqual({})
   })
 })
 

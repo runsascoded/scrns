@@ -61,7 +61,41 @@ export function isScreencast(config: ScreenshotConfig | ScreencastConfig): confi
   return 'actions' in config && Array.isArray(config.actions)
 }
 
-export type ScreenshotsMap = Record<string, ScreenshotConfig | ScreencastConfig>
+export type Screens = Record<string, ScreenshotConfig | ScreencastConfig>
+
+export type Config = {
+  host?: string | number
+  https?: boolean
+  output?: string
+  selector?: string
+  loadTimeout?: number
+  downloadSleep?: number
+  screenshots: Screens
+}
+
+/** Screenshot entry keys that distinguish a ScreenshotConfig from a nested Screens */
+const SCREENSHOT_KEYS = ['query', 'width', 'height', 'selector', 'loadTimeout', 'path', 'preScreenshotSleep', 'scrollY', 'scrollTo', 'scrollOffset', 'download', 'downloadSleep', 'actions', 'fps', 'gifQuality', 'loop'] as const
+
+function isScreens(value: unknown): value is Screens {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    && !SCREENSHOT_KEYS.some(k => k in value)
+}
+
+export function parseConfig(
+  config: Screens | Config,
+): { screens: Screens, options: Partial<Config> } {
+  if ('screenshots' in config && isScreens(config.screenshots)) {
+    const { screenshots, ...options } = config as Config
+    return { screens: screenshots, options }
+  }
+  return { screens: config as Screens, options: {} }
+}
+
+export function resolveBaseUrl(host?: string | number, https?: boolean): string {
+  let h: string = host == null ? '127.0.0.1:3000' : String(host)
+  if (h.match(/^\d+$/)) h = `127.0.0.1:${h}`
+  return `${https ? 'https' : 'http'}://${h}`
+}
 
 export type ScreenshotsOptions = {
   /** Base URL (scheme + host) */
@@ -271,7 +305,7 @@ async function recordScreencastGif(
 }
 
 export async function takeScreenshots(
-  screens: ScreenshotsMap,
+  screens: Screens,
   options: ScreenshotsOptions,
 ): Promise<void> {
   const {

@@ -42,7 +42,7 @@ scrns -i "home|about"
 
 ## Config File
 
-Create `scrns.config.ts` (or `.js`/`.json`):
+Create `scrns.config.ts` (or `.js`/`.json`). The config can be a flat `Screens` map:
 
 ```typescript
 export default {
@@ -62,6 +62,26 @@ export default {
   },
 }
 ```
+
+Or a `Config` with top-level options and a `screenshots` key, so that `host`, `output`, etc. live in the config file instead of CLI flags:
+
+```typescript
+import { Config } from 'scrns'
+
+const config: Config = {
+  host: 3456,
+  output: 'public/img/screenshots',
+  selector: '.app',
+  screenshots: {
+    'home': { query: '' },
+    'about': { query: 'about' },
+  },
+}
+
+export default config
+```
+
+Top-level config options (`host`, `https`, `output`, `selector`, `loadTimeout`, `downloadSleep`) are overridden by their corresponding CLI flags when both are specified.
 
 ### Config Options
 
@@ -182,6 +202,7 @@ await takeScreenshots({
 - [jc-taxes] ([usage][jc-taxes-scrns]) — Jersey City property tax map (deck.gl 3D visualization)
 - [use-kbd] ([usage][use-kbd-scrns]) — Omnibars, editable hotkeys, search, and keyboard-navigation for React apps
 <!-- - [disk-tree] ([usage][disk-tree-scrns]) — Disk usage visualization -->
+<!-- - [elvis] ([usage][elvis-scrns]) — Electrai visualization -->
 - [ctbk] ([usage][ctbk-scrns]) — Citi Bike trip data explorer
 - [apvd] ([usage][apvd-scrns]) — Area-proportional Venn diagrams
 
@@ -195,6 +216,8 @@ await takeScreenshots({
 [ctbk-scrns]: https://github.com/search?q=repo%3Ahudcostreets%2Fctbk.dev+scrns&type=code
 [apvd]: https://github.com/runsascoded/apvd
 [apvd-scrns]: https://github.com/search?q=repo%3Arunsascoded%2Fapvd+scrns&type=code
+[elvis]: https://github.com/Quantum-Accelerators/electrai
+[elvis-scrns]: https://github.com/search?q=repo%3AQuantum-Accelerators%2Felectrai+scrns&type=code
 [GitLab]: https://gitlab.com/runsascoded/js/scrns
 [npm]: https://www.npmjs.com/package/scrns
 [npm-badge]: https://img.shields.io/npm/v/scrns.svg

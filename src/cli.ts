@@ -3,7 +3,7 @@
 import { program } from 'commander'
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
-import { takeScreenshots, ScreenshotsMap } from './index.js'
+import { takeScreenshots, Screens, Config, parseConfig, resolveBaseUrl } from './index.js'
 
 const DEFAULT_CONFIGS = [
   'scrns.config.ts',
@@ -40,36 +40,34 @@ function findConfig(): string {
 }
 
 async function main() {
-  // Parse host
-  let host = opts.host || '127.0.0.1:3000'
-  if (host.match(/^\d+$/)) {
-    host = `127.0.0.1:${host}`
-  }
-  const scheme = opts.https ? 'https' : 'http'
-  const baseUrl = `${scheme}://${host}`
-
   // Load config
   const configPath = findConfig()
   console.log(`Using config: ${configPath}`)
-  let screens: ScreenshotsMap
+  let rawConfig: Screens | Config
 
   if (configPath.endsWith('.json')) {
     const content = readFileSync(configPath, 'utf-8')
-    screens = JSON.parse(content)
+    rawConfig = JSON.parse(content)
   } else {
     // Dynamic import for JS/TS configs
     const module = await import(configPath)
-    screens = module.default || module.screens || module
+    rawConfig = module.default || module.screens || module
   }
 
+  const { screens, options: configOptions } = parseConfig(rawConfig)
+
+  // CLI flags override config values
+  const host = opts.host ?? configOptions.host
+  const https = opts.https ?? configOptions.https
+  const baseUrl = resolveBaseUrl(host, https)
   const include = opts.include ? new RegExp(opts.include) : undefined
 
   await takeScreenshots(screens, {
     baseUrl,
-    outputDir: opts.output || './screenshots',
-    defaultSelector: opts.selector,
-    defaultLoadTimeout: opts.loadTimeout,
-    defaultDownloadSleep: opts.downloadSleep,
+    outputDir: opts.output ?? configOptions.output ?? './screenshots',
+    defaultSelector: opts.selector ?? configOptions.selector,
+    defaultLoadTimeout: opts.loadTimeout ?? configOptions.loadTimeout,
+    defaultDownloadSleep: opts.downloadSleep ?? configOptions.downloadSleep,
     include,
   })
 }
