@@ -177,6 +177,24 @@ await takeScreenshots({
 })
 ```
 
+## Used by
+
+- [jc-taxes] ([usage][jc-taxes-scrns]) — Jersey City property tax map (deck.gl 3D visualization)
+- [use-kbd] ([usage][use-kbd-scrns]) — Omnibars, editable hotkeys, search, and keyboard-navigation for React apps
+<!-- - [disk-tree] ([usage][disk-tree-scrns]) — Disk usage visualization -->
+- [ctbk] ([usage][ctbk-scrns]) — Citi Bike trip data explorer
+- [apvd] ([usage][apvd-scrns]) — Area-proportional Venn diagrams
+
+[jc-taxes]: https://github.com/runsascoded/jc-taxes
+[jc-taxes-scrns]: https://github.com/search?q=repo%3Arunsascoded%2Fjc-taxes+scrns&type=code
+[use-kbd]: https://github.com/runsascoded/use-kbd
+[use-kbd-scrns]: https://github.com/search?q=repo%3Arunsascoded%2Fuse-kbd+scrns&type=code
+[disk-tree]: https://github.com/runsascoded/disk-tree
+[disk-tree-scrns]: https://github.com/search?q=repo%3Arunsascoded%2Fdisk-tree+scrns&type=code
+[ctbk]: https://github.com/hudcostreets/ctbk.dev
+[ctbk-scrns]: https://github.com/search?q=repo%3Ahudcostreets%2Fctbk.dev+scrns&type=code
+[apvd]: https://github.com/runsascoded/apvd
+[apvd-scrns]: https://github.com/search?q=repo%3Arunsascoded%2Fapvd+scrns&type=code
 [GitLab]: https://gitlab.com/runsascoded/js/scrns
 [npm]: https://www.npmjs.com/package/scrns
 [npm-badge]: https://img.shields.io/npm/v/scrns.svg
