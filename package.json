@@ -1,6 +1,6 @@
 {
   "name": "scrns",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Automated screenshots with Puppeteer - wait for selectors, configurable viewports, CLI",
   "type": "module",
   "main": "./dist/index.cjs",
