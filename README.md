@@ -2,7 +2,7 @@
 
 [![npm version][npm-badge]][npm]
 
-Automated screenshots and screencasts (GIF/WebM) with Puppeteer - wait for selectors, configurable viewports, scroll positioning, action timelines, and downloads.
+Automated screenshots and screencasts (GIF/video) with Puppeteer - wait for selectors, configurable viewports, scroll positioning, action timelines, and downloads.
 
 ## Install
 ```bash
@@ -110,6 +110,7 @@ Adding an `actions` array to a config entry turns it into a screencast. The outp
 | `fps` | `number` | `15` | Frames per second for GIF capture |
 | `gifQuality` | `number` | `10` | GIF quality: 1-30, lower = better |
 | `loop` | `boolean` | `true` | Whether the GIF should loop |
+| `videoCrf` | `number` | `23` | CRF quality for video output (lower = better, requires ffmpeg) |
 
 ### Screencast Actions
 
@@ -170,6 +171,39 @@ export default {
   },
 }
 ```
+
+### Video Output
+
+Set the output `path` to `.mp4`, `.mkv`, `.mov`, or `.webm` to produce video output via ffmpeg instead of GIF. This gives frame-accurate recordings with proper codec compression (H.264 or VP9).
+
+**Requires [ffmpeg] on `$PATH`.**
+
+```typescript
+export default {
+  'demo': {
+    query: '?view=demo',
+    width: 800,
+    height: 600,
+    selector: '#root',
+    path: 'demo.mp4',
+    videoCrf: 18,  // lower = better quality
+    actions: [
+      { type: 'wait', duration: 1000 },
+      { type: 'key', key: 'ArrowRight', duration: 3000 },
+      { type: 'wait', duration: 1000 },
+    ],
+  },
+}
+```
+
+Codec selection is based on extension: `.webm` → VP9 (`libvpx-vp9`), all others → H.264 (`libx264`).
+
+To derive a GIF from video output:
+```bash
+ffmpeg -i demo.mp4 -vf "fps=15,scale=400:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" demo.gif
+```
+
+[ffmpeg]: https://ffmpeg.org/
 
 ## Programmatic Usage
 

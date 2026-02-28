@@ -1,6 +1,7 @@
 import puppeteer, { Browser, Page } from 'puppeteer'
 import { isAbsolute, dirname, resolve } from 'path'
 import { mkdirSync, writeFileSync } from 'fs'
+import { spawn, execFileSync } from 'child_process'
 import * as gifencModule from 'gifenc'
 // gifenc is CJS; handle both ESM interop shapes (namespace vs default-wrapped)
 const gifenc = ('default' in gifencModule && typeof (gifencModule as any).default === 'object')
@@ -55,6 +56,8 @@ export type ScreencastConfig = ScreenshotConfig & {
   gifQuality?: number
   /** Whether the GIF should loop (default: true) */
   loop?: boolean
+  /** CRF quality for video output (default: 23, lower = better) */
+  videoCrf?: number
 }
 
 export function isScreencast(config: ScreenshotConfig | ScreencastConfig): config is ScreencastConfig {
@@ -74,7 +77,7 @@ export type Config = {
 }
 
 /** Screenshot entry keys that distinguish a ScreenshotConfig from a nested Screens */
-const SCREENSHOT_KEYS = ['query', 'width', 'height', 'selector', 'loadTimeout', 'path', 'preScreenshotSleep', 'scrollY', 'scrollTo', 'scrollOffset', 'download', 'downloadSleep', 'actions', 'fps', 'gifQuality', 'loop'] as const
+const SCREENSHOT_KEYS = ['query', 'width', 'height', 'selector', 'loadTimeout', 'path', 'preScreenshotSleep', 'scrollY', 'scrollTo', 'scrollOffset', 'download', 'downloadSleep', 'actions', 'fps', 'gifQuality', 'loop', 'videoCrf'] as const
 
 function isScreens(value: unknown): value is Screens {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -210,6 +213,100 @@ function hasAnimateAction(actions: ScreencastAction[]): boolean {
   return actions.some(a => a.type === 'animate')
 }
 
+const VIDEO_EXTS = ['.mp4', '.mkv', '.mov', '.webm'] as const
+
+function isVideoExt(path: string): boolean {
+  return VIDEO_EXTS.some(ext => path.endsWith(ext))
+}
+
+function codecForExt(path: string): string {
+  if (path.endsWith('.webm')) return 'libvpx-vp9'
+  return 'libx264'
+}
+
+function assertFfmpeg(): void {
+  try { execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' }) }
+  catch { throw new Error('ffmpeg not found. Install it to use video output:\n  brew install ffmpeg    # macOS\n  apt install ffmpeg     # Ubuntu/Debian') }
+}
+
+interface FrameSink {
+  write(frame: Buffer): void
+  finish(): void | Promise<void>
+}
+
+function createGifSink(
+  path: string,
+  width: number,
+  height: number,
+  fps: number,
+  loop: boolean,
+  log: (message: string) => void,
+): FrameSink {
+  const frames: Buffer[] = []
+  return {
+    write(frame: Buffer) { frames.push(frame) },
+    finish() { encodeGif(frames, path, width, height, fps, loop, log) },
+  }
+}
+
+function createVideoSink(
+  path: string,
+  fps: number,
+  crf: number,
+  log: (message: string) => void,
+): FrameSink {
+  assertFfmpeg()
+  const codec = codecForExt(path)
+  const args = [
+    '-y',
+    '-f', 'image2pipe',
+    '-framerate', String(fps),
+    '-i', '-',
+    '-c:v', codec,
+    '-pix_fmt', 'yuv420p',
+  ]
+  if (codec === 'libvpx-vp9') {
+    args.push('-crf', String(crf), '-b:v', '0')
+  } else {
+    args.push('-crf', String(crf))
+  }
+  args.push(path)
+  const ffmpeg = spawn('ffmpeg', args, { stdio: ['pipe', 'ignore', 'pipe'] })
+  let stderr = ''
+  ffmpeg.stderr!.on('data', (data: Buffer) => { stderr += data.toString() })
+  return {
+    write(frame: Buffer) { ffmpeg.stdin!.write(frame) },
+    async finish() {
+      ffmpeg.stdin!.end()
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg.on('close', (code) => {
+          if (code === 0) {
+            log(`Saved screencast: ${path}`)
+            resolve()
+          } else {
+            reject(new Error(`ffmpeg exited with code ${code}: ${stderr}`))
+          }
+        })
+        ffmpeg.on('error', reject)
+      })
+    },
+  }
+}
+
+function createSink(
+  path: string,
+  width: number,
+  height: number,
+  config: ScreencastConfig,
+  log: (message: string) => void,
+): FrameSink {
+  const { fps = 15, loop = true, videoCrf = 23 } = config
+  if (isVideoExt(path)) {
+    return createVideoSink(path, fps, videoCrf, log)
+  }
+  return createGifSink(path, width, height, fps, loop, log)
+}
+
 async function recordFrameByFrame(
   page: Page,
   config: ScreencastConfig,
@@ -218,8 +315,8 @@ async function recordFrameByFrame(
   height: number,
   log: (message: string) => void,
 ): Promise<void> {
-  const { actions, fps = 15, loop = true } = config
-  const frames: Buffer[] = []
+  const { actions, fps = 15 } = config
+  const sink = createSink(path, width, height, config, log)
 
   log(`Recording frame-by-frame screencast...`)
 
@@ -229,13 +326,12 @@ async function recordFrameByFrame(
         log(`  animate: ${action.frames} frames`)
         for (let i = 0; i < action.frames; i++) {
           await page.evaluate(`(${action.eval})(${i}, ${action.frames})`)
-          // Wait for React/framework to re-render + paint
           await page.evaluate(() => new Promise<void>(r =>
             requestAnimationFrame(() => requestAnimationFrame(() => r()))
           ))
           if (action.frameDelay) await sleep(action.frameDelay)
           const frame = await page.screenshot({ encoding: 'binary' })
-          frames.push(Buffer.from(frame))
+          sink.write(Buffer.from(frame))
           if ((i + 1) % 10 === 0 || i === action.frames - 1) {
             log(`    frame ${i + 1}/${action.frames}`)
           }
@@ -247,7 +343,7 @@ async function recordFrameByFrame(
         log(`  wait: ${action.duration}ms (${staticFrames} static frames)`)
         const frame = await page.screenshot({ encoding: 'binary' })
         const buf = Buffer.from(frame)
-        for (let i = 0; i < staticFrames; i++) frames.push(buf)
+        for (let i = 0; i < staticFrames; i++) sink.write(buf)
         break
       }
       default:
@@ -256,24 +352,10 @@ async function recordFrameByFrame(
     }
   }
 
-  encodeGif(frames, path, width, height, fps, loop, log)
+  await sink.finish()
 }
 
-async function recordScreencastWebM(
-  page: Page,
-  config: ScreencastConfig,
-  path: string,
-  log: (message: string) => void,
-): Promise<void> {
-  const { actions } = config
-  log(`Recording WebM screencast...`)
-  const recorder = await page.screencast({ path: path as `${string}.webm` })
-  await executeActions(page, actions, log)
-  await recorder.stop()
-  log(`Saved screencast: ${path}`)
-}
-
-async function recordScreencastGif(
+async function recordScreencastRealtime(
   page: Page,
   config: ScreencastConfig,
   path: string,
@@ -281,16 +363,16 @@ async function recordScreencastGif(
   height: number,
   log: (message: string) => void,
 ): Promise<void> {
-  const { actions, fps = 15, loop = true } = config
+  const { actions, fps = 15 } = config
   const frameInterval = 1000 / fps
-  const frames: Buffer[] = []
+  const sink = createSink(path, width, height, config, log)
 
   let recording = true
   const captureLoop = (async () => {
     while (recording) {
       const start = Date.now()
       const frame = await page.screenshot({ encoding: 'binary' })
-      frames.push(Buffer.from(frame))
+      sink.write(Buffer.from(frame))
       const elapsed = Date.now() - start
       if (elapsed < frameInterval) await sleep(frameInterval - elapsed)
     }
@@ -301,7 +383,7 @@ async function recordScreencastGif(
   recording = false
   await captureLoop
 
-  encodeGif(frames, path, width, height, fps, loop, log)
+  await sink.finish()
 }
 
 export async function takeScreenshots(
@@ -406,10 +488,8 @@ export async function takeScreenshots(
       } else if (isScreencast(config)) {
         if (hasAnimateAction(config.actions)) {
           await recordFrameByFrame(page, config, path, width, height, log)
-        } else if (path.endsWith('.webm')) {
-          await recordScreencastWebM(page, config, path, log)
         } else {
-          await recordScreencastGif(page, config, path, width, height, log)
+          await recordScreencastRealtime(page, config, path, width, height, log)
         }
       } else {
         await page.screenshot({ path })

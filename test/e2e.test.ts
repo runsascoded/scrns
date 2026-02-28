@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { takeScreenshots, ScreencastConfig, Screens, Config, parseConfig, resolveBaseUrl } from '../src/index.js'
-import { spawn, ChildProcess } from 'child_process'
-import { existsSync, rmSync, mkdirSync, readFileSync } from 'fs'
+import { spawn, execFileSync, ChildProcess } from 'child_process'
+import { existsSync, rmSync, mkdirSync, readFileSync, statSync } from 'fs'
 import { resolve } from 'path'
 
 /** Count frames in a GIF by parsing the block structure (not naive byte scanning). */
@@ -49,6 +49,15 @@ function countGifFrames(buf: Buffer): number {
     }
   }
   return frames
+}
+
+function hasFfmpeg(): boolean {
+  try {
+    execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
 }
 
 const TEST_PORT = 9876
@@ -345,5 +354,53 @@ describe('scrns screencast', () => {
     // Should use .gif extension, not .png
     expect(existsSync(resolve(TEST_DIR, 'cast-default-ext.gif'))).toBe(true)
     expect(existsSync(resolve(TEST_DIR, 'cast-default-ext.png'))).toBe(false)
+  })
+})
+
+describe.skipIf(!hasFfmpeg())('scrns video output', () => {
+  it('produces an mp4 via real-time capture', { timeout: 15000 }, async () => {
+    await takeScreenshots({
+      'video-realtime': {
+        query: 'video-fixture.html',
+        width: 500,
+        height: 400,
+        path: 'video-realtime.mp4',
+        actions: [
+          { type: 'wait', duration: 8000 },
+        ],
+        fps: 10,
+      } satisfies ScreencastConfig,
+    }, {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: TEST_DIR,
+      log: () => {},
+    })
+
+    const mp4Path = resolve(TEST_DIR, 'video-realtime.mp4')
+    expect(existsSync(mp4Path)).toBe(true)
+    expect(statSync(mp4Path).size).toBeGreaterThan(0)
+  })
+
+  it('produces an mp4 via frame-by-frame capture', { timeout: 45000 }, async () => {
+    await takeScreenshots({
+      'video-framewise': {
+        query: 'video-fixture.html',
+        width: 500,
+        height: 400,
+        path: 'video-framewise.mp4',
+        actions: [
+          { type: 'animate' as const, frames: 240, eval: '(i, n) => { window.setFrame(i, n) }' },
+        ],
+        fps: 30,
+      } satisfies ScreencastConfig,
+    }, {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: TEST_DIR,
+      log: () => {},
+    })
+
+    const mp4Path = resolve(TEST_DIR, 'video-framewise.mp4')
+    expect(existsSync(mp4Path)).toBe(true)
+    expect(statSync(mp4Path).size).toBeGreaterThan(0)
   })
 })
