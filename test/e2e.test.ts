@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { takeScreenshots, ScreencastConfig, Screens, Config, parseConfig, resolveBaseUrl } from '../src/index.js'
-import { spawn, execFileSync, ChildProcess } from 'child_process'
+import { spawn, execFileSync, execSync, ChildProcess } from 'child_process'
 import { existsSync, rmSync, mkdirSync, readFileSync, statSync } from 'fs'
 import { resolve } from 'path'
 
@@ -381,8 +381,8 @@ describe.skipIf(!hasFfmpeg())('scrns video output', () => {
     expect(statSync(mp4Path).size).toBeGreaterThan(0)
   })
 
-  it('produces an mp4 via frame-by-frame capture', { timeout: 45000 }, async () => {
-    await takeScreenshots({
+  it('produces an idempotent mp4 with exact frame count (frame-by-frame)', { timeout: 90000 }, async () => {
+    const config = {
       'video-framewise': {
         query: 'video-fixture.html',
         width: 500,
@@ -393,14 +393,32 @@ describe.skipIf(!hasFfmpeg())('scrns video output', () => {
         ],
         fps: 30,
       } satisfies ScreencastConfig,
-    }, {
+    }
+    const opts = {
       baseUrl: `http://127.0.0.1:${TEST_PORT}`,
       outputDir: TEST_DIR,
       log: () => {},
-    })
-
+    }
     const mp4Path = resolve(TEST_DIR, 'video-framewise.mp4')
+
+    // Run 1
+    await takeScreenshots(config, opts)
     expect(existsSync(mp4Path)).toBe(true)
-    expect(statSync(mp4Path).size).toBeGreaterThan(0)
+    const buf1 = readFileSync(mp4Path)
+
+    // Verify frame count and codec via ffprobe
+    const probe = execSync(
+      `ffprobe -v quiet -print_format json -show_streams ${mp4Path}`,
+    ).toString()
+    const stream = JSON.parse(probe).streams[0]
+    expect(stream.codec_name).toBe('h264')
+    expect(Number(stream.nb_frames)).toBe(240)
+    expect(Number(stream.width)).toBe(500)
+    expect(Number(stream.height)).toBe(400)
+
+    // Run 2: idempotent — should produce byte-identical output
+    await takeScreenshots(config, opts)
+    const buf2 = readFileSync(mp4Path)
+    expect(Buffer.compare(buf1, buf2)).toBe(0)
   })
 })
