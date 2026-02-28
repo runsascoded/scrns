@@ -72,12 +72,11 @@
     }
 
     // Auto-animate for real-time capture (8s to draw full pattern)
-    // Animation starts when Puppeteer resizes the viewport, not at page load
+    // Starts when scrns signals capture is beginning
     let autoAnimate = true
     let animationStart = null
-    window.addEventListener('resize', () => {
-      // Delay start so the capture loop grabs its first (blank) frame
-      if (animationStart === null) setTimeout(() => { animationStart = Date.now() }, 300)
+    document.addEventListener('scrns:capture-start', () => {
+      if (animationStart === null) animationStart = Date.now()
     })
     setInterval(() => {
       if (!autoAnimate || animationStart === null) return

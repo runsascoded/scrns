@@ -367,6 +367,9 @@ async function recordScreencastRealtime(
   const frameInterval = 1000 / fps
   const sink = createSink(path, width, height, config, log)
 
+  // Signal the page that capture is about to start
+  await page.evaluate(() => document.dispatchEvent(new Event('scrns:capture-start')))
+
   let recording = true
   const captureLoop = (async () => {
     while (recording) {
