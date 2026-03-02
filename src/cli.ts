@@ -3,7 +3,7 @@
 import { program } from 'commander'
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
-import { takeScreenshots, Screens, Config, parseConfig, resolveBaseUrl } from './index.js'
+import { takeScreenshots, previewScreenshot, Screens, Config, ScreenshotConfig, parseConfig, resolveBaseUrl } from './index.js'
 
 const DEFAULT_CONFIGS = [
   'scrns.config.ts',
@@ -11,24 +11,9 @@ const DEFAULT_CONFIGS = [
   'scrns.config.json',
 ]
 
-program
-  .name('scrns')
-  .description('Take automated screenshots with Puppeteer')
-  .option('-c, --config <path>', 'Path to config file (default: scrns.config.{ts,js,json})')
-  .option('-d, --download-sleep <ms>', 'Sleep while waiting for downloads (default: 1000)', parseInt)
-  .option('-h, --host <host>', 'Hostname or port (numeric port maps to 127.0.0.1:port)')
-  .option('-i, --include <regex>', 'Only generate screenshots matching this regex')
-  .option('-l, --load-timeout <ms>', 'Timeout waiting for selector (default: 30000)', parseInt)
-  .option('-o, --output <dir>', 'Output directory (default: ./screenshots)')
-  .option('-s, --selector <css>', 'Default CSS selector to wait for')
-  .option('--https', 'Use HTTPS instead of HTTP')
-  .parse()
-
-const opts = program.opts()
-
-function findConfig(): string {
-  if (opts.config) {
-    return resolve(opts.config)
+function findConfig(configOpt?: string): string {
+  if (configOpt) {
+    return resolve(configOpt)
   }
   for (const name of DEFAULT_CONFIGS) {
     const path = resolve(name)
@@ -39,40 +24,147 @@ function findConfig(): string {
   throw new Error(`No config file found. Tried: ${DEFAULT_CONFIGS.join(', ')}`)
 }
 
-async function main() {
-  // Load config
-  const configPath = findConfig()
-  console.log(`Using config: ${configPath}`)
-  let rawConfig: Screens | Config
-
+async function loadRawConfig(configPath: string): Promise<Screens | Config> {
   if (configPath.endsWith('.json')) {
     const content = readFileSync(configPath, 'utf-8')
-    rawConfig = JSON.parse(content)
-  } else {
-    // Dynamic import for JS/TS configs
-    const module = await import(configPath)
-    rawConfig = module.default || module.screens || module
+    return JSON.parse(content)
   }
+  // Dynamic import for JS/TS configs
+  const module = await import(configPath)
+  return module.default || module.screens || module
+}
 
+type ResolvedConfig = {
+  screens: Screens
+  baseUrl: string
+  outputDir: string
+  defaultSelector?: string
+  defaultLoadTimeout?: number
+  defaultDownloadSleep?: number
+}
+
+async function loadResolvedConfig(opts: {
+  config?: string
+  host?: string
+  https?: boolean
+  output?: string
+  selector?: string
+  loadTimeout?: number
+  downloadSleep?: number
+}): Promise<ResolvedConfig> {
+  const configPath = findConfig(opts.config)
+  const log = (...args: unknown[]) => console.error(...args)
+  log(`Using config: ${configPath}`)
+  const rawConfig = await loadRawConfig(configPath)
   const { screens, options: configOptions } = parseConfig(rawConfig)
 
-  // CLI flags override config values
   const host = opts.host ?? configOptions.host
   const https = opts.https ?? configOptions.https
   const baseUrl = resolveBaseUrl(host, https)
-  const include = opts.include ? new RegExp(opts.include) : undefined
 
-  await takeScreenshots(screens, {
+  return {
+    screens,
     baseUrl,
     outputDir: opts.output ?? configOptions.output ?? './screenshots',
     defaultSelector: opts.selector ?? configOptions.selector,
     defaultLoadTimeout: opts.loadTimeout ?? configOptions.loadTimeout,
     defaultDownloadSleep: opts.downloadSleep ?? configOptions.downloadSleep,
-    include,
-  })
+  }
 }
 
-main().catch(err => {
-  console.error(err)
-  process.exit(1)
-})
+// Shared options applied to both default command and preview
+function addSharedOptions(cmd: typeof program) {
+  return cmd
+    .option('-c, --config <path>', 'Path to config file (default: scrns.config.{ts,js,json})')
+    .option('-h, --host <host>', 'Hostname or port (numeric port maps to 127.0.0.1:port)')
+    .option('-l, --load-timeout <ms>', 'Timeout waiting for selector (default: 30000)', parseInt)
+    .option('-o, --output <dir>', 'Output directory (default: ./screenshots)')
+    .option('-s, --selector <css>', 'Default CSS selector to wait for')
+    .option('--https', 'Use HTTPS instead of HTTP')
+}
+
+// Default action: take all screenshots
+addSharedOptions(program)
+  .name('scrns')
+  .description('Take automated screenshots with Puppeteer')
+  .option('-d, --download-sleep <ms>', 'Sleep while waiting for downloads (default: 1000)', parseInt)
+  .option('-i, --include <regex>', 'Only generate screenshots matching this regex')
+  .action(async (opts) => {
+    const resolved = await loadResolvedConfig(opts)
+    const include = opts.include ? new RegExp(opts.include) : undefined
+    await takeScreenshots(resolved.screens, {
+      baseUrl: resolved.baseUrl,
+      outputDir: resolved.outputDir,
+      defaultSelector: resolved.defaultSelector,
+      defaultLoadTimeout: resolved.defaultLoadTimeout,
+      defaultDownloadSleep: resolved.defaultDownloadSleep,
+      include,
+    })
+  })
+
+// Preview subcommand
+const previewCmd = program
+  .command('preview [name]')
+  .alias('record')
+  .description('Open headful browser for interactive screenshot composition')
+  .option('--url <url>', 'URL to open (overrides config entry)')
+
+addSharedOptions(previewCmd)
+  .action(async (name: string | undefined, cmdOpts) => {
+    const log = (...args: unknown[]) => console.error(...args)
+    let config: ScreenshotConfig
+    let baseUrl: string
+    let outputDir: string
+    let defaultSelector: string | undefined
+    let defaultLoadTimeout: number | undefined
+
+    if (cmdOpts.url) {
+      // --url mode: no config file needed
+      const parsed = new URL(cmdOpts.url)
+      baseUrl = `${parsed.protocol}//${parsed.host}`
+      config = {
+        query: parsed.pathname.slice(1) + parsed.search + parsed.hash,
+      }
+      outputDir = cmdOpts.output ?? './screenshots'
+      defaultSelector = cmdOpts.selector
+      defaultLoadTimeout = cmdOpts.loadTimeout
+    } else {
+      // Config-based mode
+      const resolved = await loadResolvedConfig(cmdOpts)
+      baseUrl = resolved.baseUrl
+      outputDir = resolved.outputDir
+      defaultSelector = resolved.defaultSelector
+      defaultLoadTimeout = resolved.defaultLoadTimeout
+
+      if (name) {
+        config = resolved.screens[name]
+        if (!config) {
+          log(`Entry "${name}" not found in config. Available: ${Object.keys(resolved.screens).join(', ')}`)
+          process.exit(1)
+        }
+        // Use entry name as default output filename
+        if (!config.path) {
+          config = { ...config, path: `${name}.png` }
+        }
+      } else {
+        // No name: use defaults
+        config = {}
+      }
+    }
+
+    const result = await previewScreenshot(config, {
+      baseUrl,
+      outputDir,
+      defaultSelector,
+      defaultLoadTimeout,
+      log,
+    })
+
+    const label = name ? `"${name}"` : 'preview'
+    log(`\nCaptured ${label}:`)
+    log(`  query: '${result.query}'`)
+    log(`  width: ${result.width}`)
+    log(`  height: ${result.height}`)
+  })
+
+program.parse()

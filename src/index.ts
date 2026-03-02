@@ -508,4 +508,105 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+export type PreviewResult = {
+  url: string
+  query: string
+  width: number
+  height: number
+}
+
+export async function previewScreenshot(
+  config: ScreenshotConfig,
+  options: {
+    baseUrl: string
+    outputDir: string
+    defaultSelector?: string
+    defaultLoadTimeout?: number
+    log?: (message: string) => void
+  },
+): Promise<PreviewResult> {
+  const {
+    baseUrl,
+    outputDir,
+    defaultSelector,
+    defaultLoadTimeout = DEFAULT_LOAD_TIMEOUT,
+    log = (...args: unknown[]) => console.error(...args),
+  } = options
+
+  const {
+    path: configPath,
+    query = '',
+    width = DEFAULT_WIDTH,
+    height = DEFAULT_HEIGHT,
+    selector = defaultSelector,
+    loadTimeout = defaultLoadTimeout,
+  } = config
+
+  const url = `${baseUrl}/${query}`
+
+  const browser = await puppeteer.launch({
+    headless: false,
+    args: ['--no-sandbox'],
+  })
+  const page = await browser.newPage()
+
+  try {
+    await page.setViewport({ width, height })
+    log(`Loading ${url}`)
+    await page.goto(url)
+
+    if (selector) {
+      await page.waitForSelector(selector, { timeout: loadTimeout })
+      log(`Found selector: ${selector}`)
+    }
+
+    // Inject Ctrl+Shift+S capture shortcut
+    await page.evaluate(() => {
+      window.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+          e.preventDefault()
+          ;(window as any).__scrns_capture = true
+        }
+      })
+    })
+
+    log('Press Enter here or Ctrl+Shift+S in the browser to capture')
+
+    // Race: stdin Enter vs browser Ctrl+Shift+S
+    await Promise.race([
+      new Promise<void>(resolve => {
+        process.stdin.setRawMode?.(false)
+        process.stdin.once('data', () => resolve())
+      }),
+      (async () => {
+        while (true) {
+          const captured = await page.evaluate(() => (window as any).__scrns_capture)
+          if (captured) return
+          await sleep(200)
+        }
+      })(),
+    ])
+
+    const state = await page.evaluate(() => ({
+      url: window.location.href,
+      query: window.location.search + window.location.hash,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }))
+
+    // Take screenshot
+    const defaultPath = `preview.png`
+    const outPath = configPath
+      ? (isAbsolute(configPath) ? configPath : resolve(outputDir, configPath))
+      : resolve(outputDir, defaultPath)
+    mkdirSync(dirname(outPath), { recursive: true })
+    await page.screenshot({ path: outPath })
+    log(`Saved screenshot: ${outPath}`)
+
+    return state
+  } finally {
+    await browser.close()
+  }
+}
+
 export { Browser, Page }
