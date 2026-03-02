@@ -1,4 +1,3 @@
-import puppeteer, { Browser, Page } from 'puppeteer'
 import { isAbsolute, dirname, resolve } from 'path'
 import { mkdirSync, writeFileSync } from 'fs'
 import { spawn, execFileSync } from 'child_process'
@@ -9,6 +8,10 @@ const gifenc = ('default' in gifencModule && typeof (gifencModule as any).defaul
   : gifencModule
 const { GIFEncoder, quantize, applyPalette } = gifenc
 import { PNG } from 'pngjs'
+
+export type { ScrnsEngine, ScrnsBrowser, ScrnsPage } from './engines/types.js'
+export type { EngineName } from './engines/resolve.js'
+export { resolveEngine } from './engines/resolve.js'
 
 export type ScreenshotConfig = {
   /** Output path (relative to outputDir, or absolute). Defaults to `{name}.png` */
@@ -67,6 +70,7 @@ export function isScreencast(config: ScreenshotConfig | ScreencastConfig): confi
 export type Screens = Record<string, ScreenshotConfig | ScreencastConfig>
 
 export type Config = {
+  engine?: 'puppeteer' | 'playwright'
   host?: string | number
   https?: boolean
   output?: string
@@ -100,6 +104,10 @@ export function resolveBaseUrl(host?: string | number, https?: boolean): string 
   return `${https ? 'https' : 'http'}://${h}`
 }
 
+import type { ScrnsEngine, ScrnsPage } from './engines/types.js'
+import type { EngineName } from './engines/resolve.js'
+import { resolveEngine } from './engines/resolve.js'
+
 export type ScreenshotsOptions = {
   /** Base URL (scheme + host) */
   baseUrl: string
@@ -115,6 +123,8 @@ export type ScreenshotsOptions = {
   include?: RegExp
   /** Callback for logging */
   log?: (message: string) => void
+  /** Browser engine (resolved automatically if not provided) */
+  engine?: ScrnsEngine
 }
 
 const DEFAULT_WIDTH = 800
@@ -127,7 +137,7 @@ function parseKeys(key: string): string[] {
 }
 
 async function executeActions(
-  page: Page,
+  page: ScrnsPage,
   actions: ScreencastAction[],
   log: (message: string) => void,
 ): Promise<void> {
@@ -139,18 +149,18 @@ async function executeActions(
         break
       case 'keydown':
         log(`  action: keydown ${action.key}`)
-        for (const k of parseKeys(action.key)) await page.keyboard.down(k as any)
+        for (const k of parseKeys(action.key)) await page.keyboard.down(k)
         break
       case 'keyup':
         log(`  action: keyup ${action.key}`)
-        for (const k of parseKeys(action.key).reverse()) await page.keyboard.up(k as any)
+        for (const k of parseKeys(action.key).reverse()) await page.keyboard.up(k)
         break
       case 'key': {
         log(`  action: key ${action.key} ${action.duration}ms`)
         const keys = parseKeys(action.key)
-        for (const k of keys) await page.keyboard.down(k as any)
+        for (const k of keys) await page.keyboard.down(k)
         await sleep(action.duration)
-        for (const k of keys.reverse()) await page.keyboard.up(k as any)
+        for (const k of keys.reverse()) await page.keyboard.up(k)
         break
       }
       case 'type':
@@ -308,7 +318,7 @@ function createSink(
 }
 
 async function recordFrameByFrame(
-  page: Page,
+  page: ScrnsPage,
   config: ScreencastConfig,
   path: string,
   width: number,
@@ -330,8 +340,8 @@ async function recordFrameByFrame(
             requestAnimationFrame(() => requestAnimationFrame(() => r()))
           ))
           if (action.frameDelay) await sleep(action.frameDelay)
-          const frame = await page.screenshot({ encoding: 'binary' })
-          sink.write(Buffer.from(frame))
+          const frame = await page.screenshot()
+          sink.write(frame)
           if ((i + 1) % 10 === 0 || i === action.frames - 1) {
             log(`    frame ${i + 1}/${action.frames}`)
           }
@@ -341,9 +351,8 @@ async function recordFrameByFrame(
       case 'wait': {
         const staticFrames = Math.ceil(action.duration * fps / 1000)
         log(`  wait: ${action.duration}ms (${staticFrames} static frames)`)
-        const frame = await page.screenshot({ encoding: 'binary' })
-        const buf = Buffer.from(frame)
-        for (let i = 0; i < staticFrames; i++) sink.write(buf)
+        const frame = await page.screenshot()
+        for (let i = 0; i < staticFrames; i++) sink.write(frame)
         break
       }
       default:
@@ -356,7 +365,7 @@ async function recordFrameByFrame(
 }
 
 async function recordScreencastRealtime(
-  page: Page,
+  page: ScrnsPage,
   config: ScreencastConfig,
   path: string,
   width: number,
@@ -374,8 +383,8 @@ async function recordScreencastRealtime(
   const captureLoop = (async () => {
     while (recording) {
       const start = Date.now()
-      const frame = await page.screenshot({ encoding: 'binary' })
-      sink.write(Buffer.from(frame))
+      const frame = await page.screenshot()
+      sink.write(frame)
       const elapsed = Date.now() - start
       if (elapsed < frameInterval) await sleep(frameInterval - elapsed)
     }
@@ -403,7 +412,8 @@ export async function takeScreenshots(
     log = console.log,
   } = options
 
-  const browser = await puppeteer.launch({
+  const engine = options.engine ?? await resolveEngine()
+  const browser = await engine.launch({
     headless: true,
     args: ['--no-sandbox'],
   })
@@ -443,18 +453,14 @@ export async function takeScreenshots(
 
       if (download) {
         log(`Setting download behavior to ${outputDir}`)
-        const client = await page.createCDPSession()
-        await client.send('Page.setDownloadBehavior', {
-          behavior: 'allow',
-          downloadPath: outputDir,
-        })
+        await page.setDownloadPath(outputDir)
       }
 
       log(`Loading ${url}`)
       await page.goto(url)
       log(`Loaded ${url}`)
 
-      await page.setViewport({ width, height })
+      await page.setViewportSize({ width, height })
       log('Set viewport')
 
       if (selector) {
@@ -463,21 +469,24 @@ export async function takeScreenshots(
       }
 
       if (scrollTo) {
-        const scrolled = await page.evaluate((sel, offset) => {
-          const el = document.querySelector(sel)
-          if (!el) return null
-          const rect = el.getBoundingClientRect()
-          const y = window.scrollY + rect.top - offset
-          window.scrollTo(0, y)
-          return y
-        }, scrollTo, scrollOffset)
+        const scrolled = await page.evaluate(
+          ([sel, offset]: [string, number]) => {
+            const el = document.querySelector(sel)
+            if (!el) return null
+            const rect = el.getBoundingClientRect()
+            const y = window.scrollY + rect.top - offset
+            window.scrollTo(0, y)
+            return y
+          },
+          [scrollTo, scrollOffset] as [string, number],
+        )
         if (scrolled !== null) {
           log(`Scrolled to ${scrollTo} at Y: ${scrolled}`)
         } else {
           log(`Warning: scrollTo selector "${scrollTo}" not found`)
         }
       } else if (scrollY > 0) {
-        await page.evaluate((y) => window.scrollTo(0, y), scrollY)
+        await page.evaluate((y: number) => window.scrollTo(0, y), scrollY)
         log(`Scrolled to Y: ${scrollY}`)
       }
 
@@ -523,6 +532,7 @@ export async function previewScreenshot(
     defaultSelector?: string
     defaultLoadTimeout?: number
     log?: (message: string) => void
+    engine?: ScrnsEngine
   },
 ): Promise<PreviewResult> {
   const {
@@ -544,14 +554,15 @@ export async function previewScreenshot(
 
   const url = `${baseUrl}/${query}`
 
-  const browser = await puppeteer.launch({
+  const engine = options.engine ?? await resolveEngine()
+  const browser = await engine.launch({
     headless: false,
     args: ['--no-sandbox'],
   })
   const page = await browser.newPage()
 
   try {
-    await page.setViewport({ width, height })
+    await page.setViewportSize({ width, height })
     log(`Loading ${url}`)
     await page.goto(url)
 
@@ -608,5 +619,3 @@ export async function previewScreenshot(
     await browser.close()
   }
 }
-
-export { Browser, Page }

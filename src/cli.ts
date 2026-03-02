@@ -3,7 +3,8 @@
 import { program } from 'commander'
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
-import { takeScreenshots, previewScreenshot, Screens, Config, ScreenshotConfig, parseConfig, resolveBaseUrl } from './index.js'
+import { takeScreenshots, previewScreenshot, resolveEngine, Screens, Config, ScreenshotConfig, parseConfig, resolveBaseUrl } from './index.js'
+import type { EngineName } from './index.js'
 
 const DEFAULT_CONFIGS = [
   'scrns.config.ts',
@@ -41,10 +42,12 @@ type ResolvedConfig = {
   defaultSelector?: string
   defaultLoadTimeout?: number
   defaultDownloadSleep?: number
+  engine?: EngineName
 }
 
 async function loadResolvedConfig(opts: {
   config?: string
+  engine?: string
   host?: string
   https?: boolean
   output?: string
@@ -62,6 +65,8 @@ async function loadResolvedConfig(opts: {
   const https = opts.https ?? configOptions.https
   const baseUrl = resolveBaseUrl(host, https)
 
+  const engine = (opts.engine ?? configOptions.engine) as EngineName | undefined
+
   return {
     screens,
     baseUrl,
@@ -69,6 +74,7 @@ async function loadResolvedConfig(opts: {
     defaultSelector: opts.selector ?? configOptions.selector,
     defaultLoadTimeout: opts.loadTimeout ?? configOptions.loadTimeout,
     defaultDownloadSleep: opts.downloadSleep ?? configOptions.downloadSleep,
+    engine,
   }
 }
 
@@ -76,6 +82,7 @@ async function loadResolvedConfig(opts: {
 function addSharedOptions(cmd: typeof program) {
   return cmd
     .option('-c, --config <path>', 'Path to config file (default: scrns.config.{ts,js,json})')
+    .option('-E, --engine <name>', 'Browser engine: puppeteer or playwright (default: auto-detect)')
     .option('-h, --host <host>', 'Hostname or port (numeric port maps to 127.0.0.1:port)')
     .option('-l, --load-timeout <ms>', 'Timeout waiting for selector (default: 30000)', parseInt)
     .option('-o, --output <dir>', 'Output directory (default: ./screenshots)')
@@ -91,6 +98,7 @@ addSharedOptions(program)
   .option('-i, --include <regex>', 'Only generate screenshots matching this regex')
   .action(async (opts) => {
     const resolved = await loadResolvedConfig(opts)
+    const engine = await resolveEngine(resolved.engine)
     const include = opts.include ? new RegExp(opts.include) : undefined
     await takeScreenshots(resolved.screens, {
       baseUrl: resolved.baseUrl,
@@ -99,6 +107,7 @@ addSharedOptions(program)
       defaultLoadTimeout: resolved.defaultLoadTimeout,
       defaultDownloadSleep: resolved.defaultDownloadSleep,
       include,
+      engine,
     })
   })
 
@@ -117,6 +126,7 @@ addSharedOptions(previewCmd)
     let outputDir: string
     let defaultSelector: string | undefined
     let defaultLoadTimeout: number | undefined
+    let engineName: EngineName | undefined
 
     if (cmdOpts.url) {
       // --url mode: no config file needed
@@ -128,6 +138,7 @@ addSharedOptions(previewCmd)
       outputDir = cmdOpts.output ?? './screenshots'
       defaultSelector = cmdOpts.selector
       defaultLoadTimeout = cmdOpts.loadTimeout
+      engineName = cmdOpts.engine as EngineName | undefined
     } else {
       // Config-based mode
       const resolved = await loadResolvedConfig(cmdOpts)
@@ -135,6 +146,7 @@ addSharedOptions(previewCmd)
       outputDir = resolved.outputDir
       defaultSelector = resolved.defaultSelector
       defaultLoadTimeout = resolved.defaultLoadTimeout
+      engineName = resolved.engine
 
       if (name) {
         config = resolved.screens[name]
@@ -152,12 +164,14 @@ addSharedOptions(previewCmd)
       }
     }
 
+    const engine = await resolveEngine(engineName)
     const result = await previewScreenshot(config, {
       baseUrl,
       outputDir,
       defaultSelector,
       defaultLoadTimeout,
       log,
+      engine,
     })
 
     const label = name ? `"${name}"` : 'preview'

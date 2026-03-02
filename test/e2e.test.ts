@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { takeScreenshots, ScreencastConfig, Screens, Config, parseConfig, resolveBaseUrl } from '../src/index.js'
+import { takeScreenshots, resolveEngine, ScreencastConfig, Screens, Config, parseConfig, resolveBaseUrl } from '../src/index.js'
+import type { ScrnsEngine, EngineName } from '../src/index.js'
 import { spawn, execFileSync, execSync, ChildProcess } from 'child_process'
 import { existsSync, rmSync, mkdirSync, readFileSync, statSync } from 'fs'
 import { resolve } from 'path'
@@ -60,18 +61,32 @@ function hasFfmpeg(): boolean {
   }
 }
 
+async function hasEngine(name: EngineName): Promise<boolean> {
+  try {
+    await resolveEngine(name)
+    return true
+  } catch {
+    return false
+  }
+}
+
 const TEST_PORT = 9876
-const TEST_DIR = resolve(import.meta.dirname, 'output')
+const BASE_TEST_DIR = resolve(import.meta.dirname, 'output')
 const FIXTURE_DIR = resolve(import.meta.dirname)
 
 let server: ChildProcess
 
+// Detect available engines
+const availableEngines: EngineName[] = []
+if (await hasEngine('puppeteer')) availableEngines.push('puppeteer')
+if (await hasEngine('playwright')) availableEngines.push('playwright')
+
 beforeAll(async () => {
   // Clean output dir
-  if (existsSync(TEST_DIR)) {
-    rmSync(TEST_DIR, { recursive: true })
+  if (existsSync(BASE_TEST_DIR)) {
+    rmSync(BASE_TEST_DIR, { recursive: true })
   }
-  mkdirSync(TEST_DIR, { recursive: true })
+  mkdirSync(BASE_TEST_DIR, { recursive: true })
 
   // Start static server
   server = spawn('npx', ['serve', FIXTURE_DIR, '-p', String(TEST_PORT), '-L'], {
@@ -98,7 +113,16 @@ afterAll(() => {
   server?.kill()
 })
 
-describe('scrns e2e', () => {
+describe.each(availableEngines)('scrns e2e (%s)', (engineName) => {
+  let engine: ScrnsEngine
+  let testDir: string
+
+  beforeAll(async () => {
+    engine = await resolveEngine(engineName)
+    testDir = resolve(BASE_TEST_DIR, engineName)
+    mkdirSync(testDir, { recursive: true })
+  })
+
   it('takes a basic screenshot', async () => {
     await takeScreenshots({
       'basic': {
@@ -108,10 +132,11 @@ describe('scrns e2e', () => {
       },
     }, {
       baseUrl: `http://127.0.0.1:${TEST_PORT}`,
-      outputDir: TEST_DIR,
+      outputDir: testDir,
+      engine,
     })
 
-    expect(existsSync(resolve(TEST_DIR, 'basic.png'))).toBe(true)
+    expect(existsSync(resolve(testDir, 'basic.png'))).toBe(true)
   })
 
   it('waits for selector before screenshot', async () => {
@@ -124,10 +149,11 @@ describe('scrns e2e', () => {
       },
     }, {
       baseUrl: `http://127.0.0.1:${TEST_PORT}`,
-      outputDir: TEST_DIR,
+      outputDir: testDir,
+      engine,
     })
 
-    expect(existsSync(resolve(TEST_DIR, 'selector.png'))).toBe(true)
+    expect(existsSync(resolve(testDir, 'selector.png'))).toBe(true)
   })
 
   it('scrolls to element before screenshot', async () => {
@@ -140,10 +166,11 @@ describe('scrns e2e', () => {
       },
     }, {
       baseUrl: `http://127.0.0.1:${TEST_PORT}`,
-      outputDir: TEST_DIR,
+      outputDir: testDir,
+      engine,
     })
 
-    expect(existsSync(resolve(TEST_DIR, 'scroll-to.png'))).toBe(true)
+    expect(existsSync(resolve(testDir, 'scroll-to.png'))).toBe(true)
   })
 
   it('scrolls by Y pixels before screenshot', async () => {
@@ -156,10 +183,11 @@ describe('scrns e2e', () => {
       },
     }, {
       baseUrl: `http://127.0.0.1:${TEST_PORT}`,
-      outputDir: TEST_DIR,
+      outputDir: testDir,
+      engine,
     })
 
-    expect(existsSync(resolve(TEST_DIR, 'scroll-y.png'))).toBe(true)
+    expect(existsSync(resolve(testDir, 'scroll-y.png'))).toBe(true)
   })
 
   it('respects include filter', async () => {
@@ -168,13 +196,14 @@ describe('scrns e2e', () => {
       'excluded': { query: 'fixture.html' },
     }, {
       baseUrl: `http://127.0.0.1:${TEST_PORT}`,
-      outputDir: TEST_DIR,
+      outputDir: testDir,
       include: /included/,
       log: () => {},
+      engine,
     })
 
-    expect(existsSync(resolve(TEST_DIR, 'included.png'))).toBe(true)
-    expect(existsSync(resolve(TEST_DIR, 'excluded.png'))).toBe(false)
+    expect(existsSync(resolve(testDir, 'included.png'))).toBe(true)
+    expect(existsSync(resolve(testDir, 'excluded.png'))).toBe(false)
   })
 
   it('uses custom path when specified', async () => {
@@ -185,11 +214,195 @@ describe('scrns e2e', () => {
       },
     }, {
       baseUrl: `http://127.0.0.1:${TEST_PORT}`,
-      outputDir: TEST_DIR,
+      outputDir: testDir,
       log: () => {},
+      engine,
     })
 
-    expect(existsSync(resolve(TEST_DIR, 'subdir/custom-name.png'))).toBe(true)
+    expect(existsSync(resolve(testDir, 'subdir/custom-name.png'))).toBe(true)
+  })
+
+  it('produces a GIF file with correct magic bytes', async () => {
+    await takeScreenshots({
+      'cast-basic': {
+        query: 'screencast-fixture.html',
+        width: 200,
+        height: 150,
+        actions: [
+          { type: 'wait', duration: 200 },
+        ],
+        fps: 10,
+      } satisfies ScreencastConfig,
+    }, {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: testDir,
+      log: () => {},
+      engine,
+    })
+
+    const gifPath = resolve(testDir, 'cast-basic.gif')
+    expect(existsSync(gifPath)).toBe(true)
+    const buf = readFileSync(gifPath)
+    // GIF89a magic bytes
+    expect(buf.subarray(0, 6).toString('ascii')).toBe('GIF89a')
+  })
+
+  it('executes actions that affect the page', async () => {
+    await takeScreenshots({
+      'cast-actions': {
+        query: 'screencast-fixture.html',
+        width: 200,
+        height: 150,
+        actions: [
+          { type: 'wait', duration: 100 },
+          { type: 'key', key: ' ', duration: 50 },
+          { type: 'wait', duration: 100 },
+          { type: 'key', key: ' ', duration: 50 },
+          { type: 'wait', duration: 100 },
+        ],
+        fps: 10,
+      } satisfies ScreencastConfig,
+    }, {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: testDir,
+      log: () => {},
+      engine,
+    })
+
+    const gifPath = resolve(testDir, 'cast-actions.gif')
+    expect(existsSync(gifPath)).toBe(true)
+    const buf = readFileSync(gifPath)
+    expect(buf.subarray(0, 6).toString('ascii')).toBe('GIF89a')
+    // File should have multiple frames (> a single-frame GIF)
+    expect(buf.length).toBeGreaterThan(500)
+  })
+
+  it('animate action produces deterministic GIF with exact frame count', async () => {
+    const config = {
+      'cast-animate': {
+        query: 'screencast-fixture.html',
+        width: 100,
+        height: 80,
+        actions: [
+          { type: 'animate' as const, frames: 3, eval: '(i) => { window.setColorIndex(i) }' },
+        ],
+        fps: 10,
+      } satisfies ScreencastConfig,
+    }
+    const opts = {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: testDir,
+      log: () => {},
+      engine,
+    }
+
+    // Run 1
+    await takeScreenshots(config, opts)
+    const gifPath = resolve(testDir, 'cast-animate.gif')
+    expect(existsSync(gifPath)).toBe(true)
+    const buf1 = readFileSync(gifPath)
+
+    // GIF89a header
+    expect(buf1.subarray(0, 6).toString('ascii')).toBe('GIF89a')
+
+    // Verify exact frame count via GIF block structure parsing
+    expect(countGifFrames(buf1)).toBe(3)
+
+    // Run 2: idempotent — should produce byte-identical output
+    await takeScreenshots(config, opts)
+    const buf2 = readFileSync(gifPath)
+    expect(Buffer.compare(buf1, buf2)).toBe(0)
+  })
+
+  it('defaults to .gif extension when no path specified', async () => {
+    await takeScreenshots({
+      'cast-default-ext': {
+        query: 'screencast-fixture.html',
+        width: 200,
+        height: 150,
+        actions: [
+          { type: 'wait', duration: 100 },
+        ],
+        fps: 10,
+      } satisfies ScreencastConfig,
+    }, {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: testDir,
+      log: () => {},
+      engine,
+    })
+
+    // Should use .gif extension, not .png
+    expect(existsSync(resolve(testDir, 'cast-default-ext.gif'))).toBe(true)
+    expect(existsSync(resolve(testDir, 'cast-default-ext.png'))).toBe(false)
+  })
+
+  describe.skipIf(!hasFfmpeg())('video output', () => {
+    it('produces an mp4 via real-time capture', { timeout: 15000 }, async () => {
+      await takeScreenshots({
+        'video-realtime': {
+          query: 'video-fixture.html',
+          width: 500,
+          height: 400,
+          path: 'video-realtime.mp4',
+          actions: [
+            { type: 'wait', duration: 8000 },
+          ],
+          fps: 10,
+        } satisfies ScreencastConfig,
+      }, {
+        baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+        outputDir: testDir,
+        log: () => {},
+        engine,
+      })
+
+      const mp4Path = resolve(testDir, 'video-realtime.mp4')
+      expect(existsSync(mp4Path)).toBe(true)
+      expect(statSync(mp4Path).size).toBeGreaterThan(0)
+    })
+
+    it('produces an idempotent mp4 with exact frame count (frame-by-frame)', { timeout: 90000 }, async () => {
+      const config = {
+        'video-framewise': {
+          query: 'video-fixture.html',
+          width: 500,
+          height: 400,
+          path: 'video-framewise.mp4',
+          actions: [
+            { type: 'animate' as const, frames: 240, eval: '(i, n) => { window.setFrame(i, n) }' },
+          ],
+          fps: 30,
+        } satisfies ScreencastConfig,
+      }
+      const opts = {
+        baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+        outputDir: testDir,
+        log: () => {},
+        engine,
+      }
+      const mp4Path = resolve(testDir, 'video-framewise.mp4')
+
+      // Run 1
+      await takeScreenshots(config, opts)
+      expect(existsSync(mp4Path)).toBe(true)
+      const buf1 = readFileSync(mp4Path)
+
+      // Verify frame count and codec via ffprobe
+      const probe = execSync(
+        `ffprobe -v quiet -print_format json -show_streams ${mp4Path}`,
+      ).toString()
+      const stream = JSON.parse(probe).streams[0]
+      expect(stream.codec_name).toBe('h264')
+      expect(Number(stream.nb_frames)).toBe(240)
+      expect(Number(stream.width)).toBe(500)
+      expect(Number(stream.height)).toBe(400)
+
+      // Run 2: idempotent — should produce byte-identical output
+      await takeScreenshots(config, opts)
+      const buf2 = readFileSync(mp4Path)
+      expect(Buffer.compare(buf1, buf2)).toBe(0)
+    })
   })
 })
 
@@ -241,184 +454,5 @@ describe('parseConfig', () => {
     const { screens, options } = parseConfig(flat)
     expect(screens).toBe(flat)
     expect(options).toEqual({})
-  })
-})
-
-describe('scrns screencast', () => {
-  it('produces a GIF file with correct magic bytes', async () => {
-    await takeScreenshots({
-      'cast-basic': {
-        query: 'screencast-fixture.html',
-        width: 200,
-        height: 150,
-        actions: [
-          { type: 'wait', duration: 200 },
-        ],
-        fps: 10,
-      } satisfies ScreencastConfig,
-    }, {
-      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
-      outputDir: TEST_DIR,
-      log: () => {},
-    })
-
-    const gifPath = resolve(TEST_DIR, 'cast-basic.gif')
-    expect(existsSync(gifPath)).toBe(true)
-    const buf = readFileSync(gifPath)
-    // GIF89a magic bytes
-    expect(buf.subarray(0, 6).toString('ascii')).toBe('GIF89a')
-  })
-
-  it('executes actions that affect the page', async () => {
-    await takeScreenshots({
-      'cast-actions': {
-        query: 'screencast-fixture.html',
-        width: 200,
-        height: 150,
-        actions: [
-          { type: 'wait', duration: 100 },
-          { type: 'key', key: ' ', duration: 50 },
-          { type: 'wait', duration: 100 },
-          { type: 'key', key: ' ', duration: 50 },
-          { type: 'wait', duration: 100 },
-        ],
-        fps: 10,
-      } satisfies ScreencastConfig,
-    }, {
-      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
-      outputDir: TEST_DIR,
-      log: () => {},
-    })
-
-    const gifPath = resolve(TEST_DIR, 'cast-actions.gif')
-    expect(existsSync(gifPath)).toBe(true)
-    const buf = readFileSync(gifPath)
-    expect(buf.subarray(0, 6).toString('ascii')).toBe('GIF89a')
-    // File should have multiple frames (> a single-frame GIF)
-    expect(buf.length).toBeGreaterThan(500)
-  })
-
-  it('animate action produces deterministic GIF with exact frame count', async () => {
-    const config = {
-      'cast-animate': {
-        query: 'screencast-fixture.html',
-        width: 100,
-        height: 80,
-        actions: [
-          { type: 'animate' as const, frames: 3, eval: '(i) => { window.setColorIndex(i) }' },
-        ],
-        fps: 10,
-      } satisfies ScreencastConfig,
-    }
-    const opts = {
-      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
-      outputDir: TEST_DIR,
-      log: () => {},
-    }
-
-    // Run 1
-    await takeScreenshots(config, opts)
-    const gifPath = resolve(TEST_DIR, 'cast-animate.gif')
-    expect(existsSync(gifPath)).toBe(true)
-    const buf1 = readFileSync(gifPath)
-
-    // GIF89a header
-    expect(buf1.subarray(0, 6).toString('ascii')).toBe('GIF89a')
-
-    // Verify exact frame count via GIF block structure parsing
-    expect(countGifFrames(buf1)).toBe(3)
-
-    // Run 2: idempotent — should produce byte-identical output
-    await takeScreenshots(config, opts)
-    const buf2 = readFileSync(gifPath)
-    expect(Buffer.compare(buf1, buf2)).toBe(0)
-  })
-
-  it('defaults to .gif extension when no path specified', async () => {
-    await takeScreenshots({
-      'cast-default-ext': {
-        query: 'screencast-fixture.html',
-        width: 200,
-        height: 150,
-        actions: [
-          { type: 'wait', duration: 100 },
-        ],
-        fps: 10,
-      } satisfies ScreencastConfig,
-    }, {
-      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
-      outputDir: TEST_DIR,
-      log: () => {},
-    })
-
-    // Should use .gif extension, not .png
-    expect(existsSync(resolve(TEST_DIR, 'cast-default-ext.gif'))).toBe(true)
-    expect(existsSync(resolve(TEST_DIR, 'cast-default-ext.png'))).toBe(false)
-  })
-})
-
-describe.skipIf(!hasFfmpeg())('scrns video output', () => {
-  it('produces an mp4 via real-time capture', { timeout: 15000 }, async () => {
-    await takeScreenshots({
-      'video-realtime': {
-        query: 'video-fixture.html',
-        width: 500,
-        height: 400,
-        path: 'video-realtime.mp4',
-        actions: [
-          { type: 'wait', duration: 8000 },
-        ],
-        fps: 10,
-      } satisfies ScreencastConfig,
-    }, {
-      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
-      outputDir: TEST_DIR,
-      log: () => {},
-    })
-
-    const mp4Path = resolve(TEST_DIR, 'video-realtime.mp4')
-    expect(existsSync(mp4Path)).toBe(true)
-    expect(statSync(mp4Path).size).toBeGreaterThan(0)
-  })
-
-  it('produces an idempotent mp4 with exact frame count (frame-by-frame)', { timeout: 90000 }, async () => {
-    const config = {
-      'video-framewise': {
-        query: 'video-fixture.html',
-        width: 500,
-        height: 400,
-        path: 'video-framewise.mp4',
-        actions: [
-          { type: 'animate' as const, frames: 240, eval: '(i, n) => { window.setFrame(i, n) }' },
-        ],
-        fps: 30,
-      } satisfies ScreencastConfig,
-    }
-    const opts = {
-      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
-      outputDir: TEST_DIR,
-      log: () => {},
-    }
-    const mp4Path = resolve(TEST_DIR, 'video-framewise.mp4')
-
-    // Run 1
-    await takeScreenshots(config, opts)
-    expect(existsSync(mp4Path)).toBe(true)
-    const buf1 = readFileSync(mp4Path)
-
-    // Verify frame count and codec via ffprobe
-    const probe = execSync(
-      `ffprobe -v quiet -print_format json -show_streams ${mp4Path}`,
-    ).toString()
-    const stream = JSON.parse(probe).streams[0]
-    expect(stream.codec_name).toBe('h264')
-    expect(Number(stream.nb_frames)).toBe(240)
-    expect(Number(stream.width)).toBe(500)
-    expect(Number(stream.height)).toBe(400)
-
-    // Run 2: idempotent — should produce byte-identical output
-    await takeScreenshots(config, opts)
-    const buf2 = readFileSync(mp4Path)
-    expect(Buffer.compare(buf1, buf2)).toBe(0)
   })
 })

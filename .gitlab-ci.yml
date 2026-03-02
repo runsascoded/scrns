@@ -21,6 +21,8 @@ stages:
         libgbm1 libasound2
     - npm install -g pnpm@9
     - pnpm install
+    # Install Playwright's Chromium browser binary + system deps
+    - pnpm exec playwright install --with-deps chromium
 
 # Run tests on all branches
 test:

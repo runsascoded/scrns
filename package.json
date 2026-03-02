@@ -37,6 +37,14 @@
     "type": "git",
     "url": "https://gitlab.com/runsascoded/js/scrns"
   },
+  "peerDependencies": {
+    "playwright": ">=1.40"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
+  },
   "dependencies": {
     "commander": "^12.1.0",
     "gifenc": "^1.0.3",
