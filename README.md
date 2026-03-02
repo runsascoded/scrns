@@ -2,7 +2,7 @@
 
 [![npm version][npm-badge]][npm]
 
-Automated screenshots and screencasts (GIF/video) with Puppeteer - wait for selectors, configurable viewports, scroll positioning, action timelines, and downloads.
+Automated screenshots and screencasts (GIF/video) with Puppeteer or Playwright — wait for selectors, configurable viewports, scroll positioning, action timelines, and downloads.
 
 ## Install
 ```bash
@@ -10,6 +10,13 @@ pnpm add scrns
 # or
 npm install scrns
 ```
+
+Puppeteer is included by default. To use [Playwright] instead (or alongside):
+```bash
+pnpm add playwright
+```
+
+[Playwright]: https://playwright.dev/
 
 ## CLI Usage
 ```bash
@@ -21,6 +28,7 @@ scrns [options]
 |------|-------------|
 | `-c, --config <path>` | Config file path (default: `scrns.config.{ts,js,json}`) |
 | `-d, --download-sleep <ms>` | Sleep while waiting for downloads (default: 1000) |
+| `-E, --engine <name>` | Browser engine: `puppeteer` or `playwright` (default: auto-detect) |
 | `-h, --host <host>` | Hostname or port (numeric port maps to `127.0.0.1:port`) |
 | `-i, --include <regex>` | Only generate screenshots matching this regex |
 | `-l, --load-timeout <ms>` | Timeout waiting for selector (default: 30000) |
@@ -38,6 +46,29 @@ scrns -h 8080 -c my-config.ts
 
 # Filter to specific screenshots
 scrns -i "home|about"
+
+# Use Playwright instead of Puppeteer
+scrns -E playwright
+```
+
+### Preview Mode
+
+`scrns preview` (aliased `record`) opens a headful browser for interactively composing screenshots. Adjust the view and resize the window, then capture with Enter (terminal) or Ctrl+Shift+S (browser):
+
+```bash
+# Preview a specific config entry
+scrns preview <name>
+
+# Preview an arbitrary URL (no config needed)
+scrns preview --url 'http://localhost:3000/?view=map'
+```
+
+On capture, prints the resulting state as a config snippet:
+```
+Captured "og":
+  query: '?view=map&zoom=12'
+  width: 1200
+  height: 800
 ```
 
 ## Config File
@@ -69,6 +100,7 @@ Or a `Config` with top-level options and a `screenshots` key, so that `host`, `o
 import { Config } from 'scrns'
 
 const config: Config = {
+  engine: 'playwright',  // or 'puppeteer' (default: auto-detect)
   host: 3456,
   output: 'public/img/screenshots',
   selector: '.app',
@@ -81,7 +113,7 @@ const config: Config = {
 export default config
 ```
 
-Top-level config options (`host`, `https`, `output`, `selector`, `loadTimeout`, `downloadSleep`) are overridden by their corresponding CLI flags when both are specified.
+Top-level config options (`engine`, `host`, `https`, `output`, `selector`, `loadTimeout`, `downloadSleep`) are overridden by their corresponding CLI flags when both are specified.
 
 ### Config Options
 
@@ -208,7 +240,10 @@ ffmpeg -i demo.mp4 -vf "fps=15,scale=400:-1:flags=lanczos,split[s0][s1];[s0]pale
 ## Programmatic Usage
 
 ```typescript
-import { takeScreenshots, ScreencastConfig } from 'scrns'
+import { takeScreenshots, resolveEngine, ScreencastConfig } from 'scrns'
+
+// Optional: explicitly choose an engine (auto-detects if omitted)
+const engine = await resolveEngine('playwright')
 
 await takeScreenshots({
   'home': { query: '' },
@@ -228,6 +263,7 @@ await takeScreenshots({
   defaultSelector: '#app',
   include: /home|demo/,
   log: console.log,
+  engine,  // omit to auto-detect
 })
 ```
 
