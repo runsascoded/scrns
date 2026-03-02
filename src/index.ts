@@ -415,7 +415,11 @@ export async function takeScreenshots(
   const engine = options.engine ?? await resolveEngine()
   const browser = await engine.launch({
     headless: true,
-    args: ['--no-sandbox'],
+    args: [
+      '--no-sandbox',
+      '--disable-skia-runtime-opts',  // Force baseline Skia code paths for cross-CPU determinism
+      '--force-device-scale-factor=1',
+    ],
   })
   const page = await browser.newPage()
 
@@ -557,7 +561,11 @@ export async function previewScreenshot(
   const engine = options.engine ?? await resolveEngine()
   const browser = await engine.launch({
     headless: false,
-    args: ['--no-sandbox'],
+    args: [
+      '--no-sandbox',
+      '--disable-skia-runtime-opts',
+      '--force-device-scale-factor=1',
+    ],
   })
   const page = await browser.newPage()
 
