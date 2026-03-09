@@ -40,6 +40,10 @@ export type ScreenshotConfig = {
   downloadSleep?: number
   /** Additional browser launch args for this screenshot */
   browserArgs?: string[]
+  /** Override headless mode for this screenshot (default: true) */
+  headless?: boolean
+  /** Timeout in ms for page.screenshot() calls (default: 30000) */
+  screenshotTimeout?: number
 }
 
 export type ScreencastAction =
@@ -80,11 +84,13 @@ export type Config = {
   loadTimeout?: number
   downloadSleep?: number
   browserArgs?: string[]
+  headless?: boolean
+  screenshotTimeout?: number
   screenshots: Screens
 }
 
 /** Screenshot entry keys that distinguish a ScreenshotConfig from a nested Screens */
-const SCREENSHOT_KEYS = ['query', 'width', 'height', 'selector', 'loadTimeout', 'path', 'preScreenshotSleep', 'scrollY', 'scrollTo', 'scrollOffset', 'download', 'downloadSleep', 'actions', 'fps', 'gifQuality', 'loop', 'videoCrf', 'browserArgs'] as const
+const SCREENSHOT_KEYS = ['query', 'width', 'height', 'selector', 'loadTimeout', 'path', 'preScreenshotSleep', 'scrollY', 'scrollTo', 'scrollOffset', 'download', 'downloadSleep', 'actions', 'fps', 'gifQuality', 'loop', 'videoCrf', 'browserArgs', 'headless', 'screenshotTimeout'] as const
 
 function isScreens(value: unknown): value is Screens {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -130,12 +136,17 @@ export type ScreenshotsOptions = {
   engine?: ScrnsEngine
   /** Additional browser launch args (merged with defaults and per-screenshot args) */
   browserArgs?: string[]
+  /** Default headless mode (default: true) */
+  headless?: boolean
+  /** Default screenshot timeout in ms (default: 30000) */
+  defaultScreenshotTimeout?: number
 }
 
 const DEFAULT_WIDTH = 800
 const DEFAULT_HEIGHT = 560
 const DEFAULT_LOAD_TIMEOUT = 30000
 const DEFAULT_DOWNLOAD_SLEEP = 1000
+const DEFAULT_SCREENSHOT_TIMEOUT = 30000
 
 const BASE_BROWSER_ARGS = [
   '--no-sandbox',
@@ -335,9 +346,11 @@ async function recordFrameByFrame(
   width: number,
   height: number,
   log: (message: string) => void,
+  screenshotTimeout?: number,
 ): Promise<void> {
   const { actions, fps = 15 } = config
   const sink = createSink(path, width, height, config, log)
+  const ssOpts = screenshotTimeout ? { timeout: screenshotTimeout } : undefined
 
   log(`Recording frame-by-frame screencast...`)
 
@@ -351,7 +364,7 @@ async function recordFrameByFrame(
             requestAnimationFrame(() => requestAnimationFrame(() => r()))
           ))
           if (action.frameDelay) await sleep(action.frameDelay)
-          const frame = await page.screenshot()
+          const frame = await page.screenshot(ssOpts)
           sink.write(frame)
           if ((i + 1) % 10 === 0 || i === action.frames - 1) {
             log(`    frame ${i + 1}/${action.frames}`)
@@ -362,7 +375,7 @@ async function recordFrameByFrame(
       case 'wait': {
         const staticFrames = Math.ceil(action.duration * fps / 1000)
         log(`  wait: ${action.duration}ms (${staticFrames} static frames)`)
-        const frame = await page.screenshot()
+        const frame = await page.screenshot(ssOpts)
         for (let i = 0; i < staticFrames; i++) sink.write(frame)
         break
       }
@@ -382,10 +395,12 @@ async function recordScreencastRealtime(
   width: number,
   height: number,
   log: (message: string) => void,
+  screenshotTimeout?: number,
 ): Promise<void> {
   const { actions, fps = 15 } = config
   const frameInterval = 1000 / fps
   const sink = createSink(path, width, height, config, log)
+  const ssOpts = screenshotTimeout ? { timeout: screenshotTimeout } : undefined
 
   // Signal the page that capture is about to start
   await page.evaluate(() => document.dispatchEvent(new Event('scrns:capture-start')))
@@ -394,7 +409,7 @@ async function recordScreencastRealtime(
   const captureLoop = (async () => {
     while (recording) {
       const start = Date.now()
-      const frame = await page.screenshot()
+      const frame = await page.screenshot(ssOpts)
       sink.write(frame)
       const elapsed = Date.now() - start
       if (elapsed < frameInterval) await sleep(frameInterval - elapsed)
@@ -409,6 +424,9 @@ async function recordScreencastRealtime(
   await sink.finish()
 }
 
+/** SwiftShader-related args that should be filtered out in headful mode */
+const SWIFTSHADER_ARGS = ['--use-angle=swiftshader', '--use-gl=swiftshader']
+
 export async function takeScreenshots(
   screens: Screens,
   options: ScreenshotsOptions,
@@ -419,112 +437,134 @@ export async function takeScreenshots(
     defaultSelector,
     defaultLoadTimeout = DEFAULT_LOAD_TIMEOUT,
     defaultDownloadSleep = DEFAULT_DOWNLOAD_SLEEP,
+    defaultScreenshotTimeout = DEFAULT_SCREENSHOT_TIMEOUT,
     include,
     log = console.log,
   } = options
+  const defaultHeadless = options.headless ?? true
 
   const engine = options.engine ?? await resolveEngine()
-  // Collect all per-screenshot browserArgs and merge with options-level args
-  const perShotArgs = Object.values(screens).flatMap(s => s.browserArgs ?? [])
-  const args = [
-    ...BASE_BROWSER_ARGS,
-    ...(options.browserArgs ?? []),
-    ...perShotArgs,
-  ]
-  const browser = await engine.launch({ headless: true, args })
-  const page = await browser.newPage()
 
-  try {
-    for (const [name, config] of Object.entries(screens)) {
-      if (include && !name.match(include)) {
-        log(`Skipping ${name}`)
-        continue
-      }
+  // Filter entries, preserving order
+  const entries = Object.entries(screens)
+    .filter(([name]) => !include || name.match(include))
 
-      const {
-        path: configPath,
-        query = '',
-        width = DEFAULT_WIDTH,
-        height = DEFAULT_HEIGHT,
-        selector = defaultSelector,
-        loadTimeout = defaultLoadTimeout,
-        preScreenshotSleep = 0,
-        scrollY = 0,
-        scrollTo,
-        scrollOffset = 0,
-        download = false,
-        downloadSleep = defaultDownloadSleep,
-      } = config
+  // Group by effective headless mode
+  const groups = new Map<boolean, [string, ScreenshotConfig | ScreencastConfig][]>()
+  for (const entry of entries) {
+    const headless = entry[1].headless ?? defaultHeadless
+    if (!groups.has(headless)) groups.set(headless, [])
+    groups.get(headless)!.push(entry)
+  }
 
-      const url = `${baseUrl}/${query}`
-      const defaultExt = isScreencast(config) ? '.gif' : '.png'
-      const defaultPath = `${name}${defaultExt}`
-      const path = configPath
-        ? (isAbsolute(configPath) ? configPath : resolve(outputDir, configPath))
-        : resolve(outputDir, defaultPath)
-
-      // Ensure output directory exists
-      mkdirSync(dirname(path), { recursive: true })
-
-      if (download) {
-        log(`Setting download behavior to ${outputDir}`)
-        await page.setDownloadPath(outputDir)
-      }
-
-      log(`Loading ${url}`)
-      await page.goto(url)
-      log(`Loaded ${url}`)
-
-      await page.setViewportSize({ width, height })
-      log('Set viewport')
-
-      if (selector) {
-        await page.waitForSelector(selector, { timeout: loadTimeout })
-        log(`Found selector: ${selector}`)
-      }
-
-      if (scrollTo) {
-        const scrolled = await page.evaluate(
-          ([sel, offset]: [string, number]) => {
-            const el = document.querySelector(sel)
-            if (!el) return null
-            const rect = el.getBoundingClientRect()
-            const y = window.scrollY + rect.top - offset
-            window.scrollTo(0, y)
-            return y
-          },
-          [scrollTo, scrollOffset] as [string, number],
-        )
-        if (scrolled !== null) {
-          log(`Scrolled to ${scrollTo} at Y: ${scrolled}`)
-        } else {
-          log(`Warning: scrollTo selector "${scrollTo}" not found`)
-        }
-      } else if (scrollY > 0) {
-        await page.evaluate((y: number) => window.scrollTo(0, y), scrollY)
-        log(`Scrolled to Y: ${scrollY}`)
-      }
-
-      if (preScreenshotSleep > 0) {
-        await sleep(preScreenshotSleep)
-      }
-
-      if (download) {
-        await sleep(downloadSleep)
-        log('Download complete')
-      } else if (isScreencast(config)) {
-        if (hasAnimateAction(config.actions)) {
-          await recordFrameByFrame(page, config, path, width, height, log)
-        } else {
-          await recordScreencastRealtime(page, config, path, width, height, log)
-        }
-      } else {
-        await page.screenshot({ path })
-        log(`Saved screenshot: ${path}`)
-      }
+  for (const [headless, groupEntries] of groups) {
+    // Collect per-shot browserArgs for this group
+    const perShotArgs = groupEntries.flatMap(([, s]) => s.browserArgs ?? [])
+    let args = [
+      ...BASE_BROWSER_ARGS,
+      ...(options.browserArgs ?? []),
+      ...perShotArgs,
+    ]
+    // In headful mode, filter out SwiftShader args unless a shot explicitly sets them
+    if (!headless) {
+      const explicitArgs = new Set(groupEntries.flatMap(([, s]) => s.browserArgs ?? []))
+      args = args.filter(a => !SWIFTSHADER_ARGS.includes(a) || explicitArgs.has(a))
     }
-  } finally {
-    await browser.close()
+
+    const browser = await engine.launch({ headless, args })
+    const page = await browser.newPage()
+
+    try {
+      for (const [name, config] of groupEntries) {
+        const screenshotTimeout = config.screenshotTimeout ?? defaultScreenshotTimeout
+        const ssOpts: { path?: string; timeout?: number } = { timeout: screenshotTimeout }
+
+        const {
+          path: configPath,
+          query = '',
+          width = DEFAULT_WIDTH,
+          height = DEFAULT_HEIGHT,
+          selector = defaultSelector,
+          loadTimeout = defaultLoadTimeout,
+          preScreenshotSleep = 0,
+          scrollY = 0,
+          scrollTo,
+          scrollOffset = 0,
+          download = false,
+          downloadSleep = defaultDownloadSleep,
+        } = config
+
+        const url = `${baseUrl}/${query}`
+        const defaultExt = isScreencast(config) ? '.gif' : '.png'
+        const defaultPath = `${name}${defaultExt}`
+        const path = configPath
+          ? (isAbsolute(configPath) ? configPath : resolve(outputDir, configPath))
+          : resolve(outputDir, defaultPath)
+
+        // Ensure output directory exists
+        mkdirSync(dirname(path), { recursive: true })
+
+        if (download) {
+          log(`Setting download behavior to ${outputDir}`)
+          await page.setDownloadPath(outputDir)
+        }
+
+        log(`Loading ${url}`)
+        await page.goto(url)
+        log(`Loaded ${url}`)
+
+        await page.setViewportSize({ width, height })
+        log('Set viewport')
+
+        if (selector) {
+          await page.waitForSelector(selector, { timeout: loadTimeout })
+          log(`Found selector: ${selector}`)
+        }
+
+        if (scrollTo) {
+          const scrolled = await page.evaluate(
+            ([sel, offset]: [string, number]) => {
+              const el = document.querySelector(sel)
+              if (!el) return null
+              const rect = el.getBoundingClientRect()
+              const y = window.scrollY + rect.top - offset
+              window.scrollTo(0, y)
+              return y
+            },
+            [scrollTo, scrollOffset] as [string, number],
+          )
+          if (scrolled !== null) {
+            log(`Scrolled to ${scrollTo} at Y: ${scrolled}`)
+          } else {
+            log(`Warning: scrollTo selector "${scrollTo}" not found`)
+          }
+        } else if (scrollY > 0) {
+          await page.evaluate((y: number) => window.scrollTo(0, y), scrollY)
+          log(`Scrolled to Y: ${scrollY}`)
+        }
+
+        if (preScreenshotSleep > 0) {
+          await sleep(preScreenshotSleep)
+        }
+
+        if (download) {
+          await sleep(downloadSleep)
+          log('Download complete')
+        } else if (isScreencast(config)) {
+          if (hasAnimateAction(config.actions)) {
+            await recordFrameByFrame(page, config, path, width, height, log, screenshotTimeout)
+          } else {
+            await recordScreencastRealtime(page, config, path, width, height, log, screenshotTimeout)
+          }
+        } else {
+          ssOpts.path = path
+          await page.screenshot(ssOpts)
+          log(`Saved screenshot: ${path}`)
+        }
+      }
+    } finally {
+      await browser.close()
+    }
   }
 }
 

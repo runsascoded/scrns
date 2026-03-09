@@ -37,10 +37,11 @@ function wrapPage(page: any): ScrnsPage {
     async waitForSelector(selector: string, opts?: { timeout?: number }) {
       await page.waitForSelector(selector, opts)
     },
-    async screenshot(opts?: { path?: string }): Promise<Buffer> {
+    async screenshot(opts?: { path?: string; timeout?: number }): Promise<Buffer> {
       const result = await page.screenshot({
         path: opts?.path,
         encoding: 'binary',
+        timeout: opts?.timeout,
       })
       return Buffer.from(result)
     },

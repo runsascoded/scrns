@@ -39,8 +39,8 @@ function wrapPage(page: any): ScrnsPage {
       // rather than Playwright's default 'visible' which can fail on hidden SVG elements etc.
       await page.waitForSelector(selector, { ...opts, state: 'attached' })
     },
-    async screenshot(opts?: { path?: string }): Promise<Buffer> {
-      return page.screenshot({ path: opts?.path })
+    async screenshot(opts?: { path?: string; timeout?: number }): Promise<Buffer> {
+      return page.screenshot({ path: opts?.path, timeout: opts?.timeout })
     },
     async evaluate<R>(pageFunction: string | ((...args: any[]) => R), arg?: any): Promise<R> {
       if (arg !== undefined) {

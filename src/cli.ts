@@ -42,8 +42,10 @@ type ResolvedConfig = {
   defaultSelector?: string
   defaultLoadTimeout?: number
   defaultDownloadSleep?: number
+  defaultScreenshotTimeout?: number
   engine?: EngineName
   browserArgs: string[]
+  headless?: boolean
 }
 
 async function loadResolvedConfig(opts: {
@@ -55,7 +57,9 @@ async function loadResolvedConfig(opts: {
   selector?: string
   loadTimeout?: number
   downloadSleep?: number
+  screenshotTimeout?: number
   browserArg?: string[]
+  headful?: boolean
 }): Promise<ResolvedConfig> {
   const configPath = findConfig(opts.config)
   const log = (...args: unknown[]) => console.error(...args)
@@ -74,6 +78,9 @@ async function loadResolvedConfig(opts: {
     ...(opts.browserArg ?? []),
   ]
 
+  // CLI --headful overrides config headless
+  const headless = opts.headful ? false : (configOptions.headless ?? undefined)
+
   return {
     screens,
     baseUrl,
@@ -81,8 +88,10 @@ async function loadResolvedConfig(opts: {
     defaultSelector: opts.selector ?? configOptions.selector,
     defaultLoadTimeout: opts.loadTimeout ?? configOptions.loadTimeout,
     defaultDownloadSleep: opts.downloadSleep ?? configOptions.downloadSleep,
+    defaultScreenshotTimeout: opts.screenshotTimeout ?? configOptions.screenshotTimeout,
     engine,
     browserArgs,
+    headless,
   }
 }
 
@@ -93,9 +102,11 @@ function addSharedOptions(cmd: typeof program) {
     .option('-b, --browser-arg <arg>', 'Additional browser launch arg (repeatable)', (val: string, prev: string[]) => [...prev, val], [] as string[])
     .option('-E, --engine <name>', 'Browser engine: puppeteer or playwright (default: auto-detect)')
     .option('-h, --host <host>', 'Hostname or port (numeric port maps to 127.0.0.1:port)')
+    .option('-H, --headful', 'Run browser in headful mode (override config headless)')
     .option('-l, --load-timeout <ms>', 'Timeout waiting for selector (default: 30000)', parseInt)
     .option('-o, --output <dir>', 'Output directory (default: ./screenshots)')
     .option('-s, --selector <css>', 'Default CSS selector to wait for')
+    .option('-T, --screenshot-timeout <ms>', 'Timeout per screenshot capture (default: 30000)', parseInt)
     .option('--https', 'Use HTTPS instead of HTTP')
 }
 
@@ -115,9 +126,11 @@ addSharedOptions(program)
       defaultSelector: resolved.defaultSelector,
       defaultLoadTimeout: resolved.defaultLoadTimeout,
       defaultDownloadSleep: resolved.defaultDownloadSleep,
+      defaultScreenshotTimeout: resolved.defaultScreenshotTimeout,
       include,
       engine,
       browserArgs: resolved.browserArgs,
+      headless: resolved.headless,
     })
   })
 

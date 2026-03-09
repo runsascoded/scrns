@@ -2,7 +2,7 @@ export interface ScrnsPage {
   goto(url: string): Promise<void>
   setViewportSize(size: { width: number; height: number }): Promise<void>
   waitForSelector(selector: string, opts?: { timeout?: number }): Promise<void>
-  screenshot(opts?: { path?: string }): Promise<Buffer>
+  screenshot(opts?: { path?: string; timeout?: number }): Promise<Buffer>
   evaluate<R>(pageFunction: string | ((...args: any[]) => R), arg?: any): Promise<R>
   keyboard: {
     down(key: string): Promise<void>
