@@ -43,6 +43,7 @@ type ResolvedConfig = {
   defaultLoadTimeout?: number
   defaultDownloadSleep?: number
   engine?: EngineName
+  browserArgs: string[]
 }
 
 async function loadResolvedConfig(opts: {
@@ -54,6 +55,7 @@ async function loadResolvedConfig(opts: {
   selector?: string
   loadTimeout?: number
   downloadSleep?: number
+  browserArg?: string[]
 }): Promise<ResolvedConfig> {
   const configPath = findConfig(opts.config)
   const log = (...args: unknown[]) => console.error(...args)
@@ -67,6 +69,11 @@ async function loadResolvedConfig(opts: {
 
   const engine = (opts.engine ?? configOptions.engine) as EngineName | undefined
 
+  const browserArgs = [
+    ...(configOptions.browserArgs ?? []),
+    ...(opts.browserArg ?? []),
+  ]
+
   return {
     screens,
     baseUrl,
@@ -75,6 +82,7 @@ async function loadResolvedConfig(opts: {
     defaultLoadTimeout: opts.loadTimeout ?? configOptions.loadTimeout,
     defaultDownloadSleep: opts.downloadSleep ?? configOptions.downloadSleep,
     engine,
+    browserArgs,
   }
 }
 
@@ -82,6 +90,7 @@ async function loadResolvedConfig(opts: {
 function addSharedOptions(cmd: typeof program) {
   return cmd
     .option('-c, --config <path>', 'Path to config file (default: scrns.config.{ts,js,json})')
+    .option('-b, --browser-arg <arg>', 'Additional browser launch arg (repeatable)', (val: string, prev: string[]) => [...prev, val], [] as string[])
     .option('-E, --engine <name>', 'Browser engine: puppeteer or playwright (default: auto-detect)')
     .option('-h, --host <host>', 'Hostname or port (numeric port maps to 127.0.0.1:port)')
     .option('-l, --load-timeout <ms>', 'Timeout waiting for selector (default: 30000)', parseInt)
@@ -93,7 +102,7 @@ function addSharedOptions(cmd: typeof program) {
 // Default action: take all screenshots
 addSharedOptions(program)
   .name('scrns')
-  .description('Take automated screenshots with Puppeteer')
+  .description('Take automated screenshots with Playwright/Puppeteer')
   .option('-d, --download-sleep <ms>', 'Sleep while waiting for downloads (default: 1000)', parseInt)
   .option('-i, --include <regex>', 'Only generate screenshots matching this regex')
   .action(async (opts) => {
@@ -108,6 +117,7 @@ addSharedOptions(program)
       defaultDownloadSleep: resolved.defaultDownloadSleep,
       include,
       engine,
+      browserArgs: resolved.browserArgs,
     })
   })
 
@@ -127,6 +137,7 @@ addSharedOptions(previewCmd)
     let defaultSelector: string | undefined
     let defaultLoadTimeout: number | undefined
     let engineName: EngineName | undefined
+    let browserArgs: string[] = []
 
     if (cmdOpts.url) {
       // --url mode: no config file needed
@@ -139,6 +150,7 @@ addSharedOptions(previewCmd)
       defaultSelector = cmdOpts.selector
       defaultLoadTimeout = cmdOpts.loadTimeout
       engineName = cmdOpts.engine as EngineName | undefined
+      browserArgs = cmdOpts.browserArg ?? []
     } else {
       // Config-based mode
       const resolved = await loadResolvedConfig(cmdOpts)
@@ -147,6 +159,7 @@ addSharedOptions(previewCmd)
       defaultSelector = resolved.defaultSelector
       defaultLoadTimeout = resolved.defaultLoadTimeout
       engineName = resolved.engine
+      browserArgs = resolved.browserArgs
 
       if (name) {
         config = resolved.screens[name]
@@ -172,6 +185,7 @@ addSharedOptions(previewCmd)
       defaultLoadTimeout,
       log,
       engine,
+      browserArgs,
     })
 
     const label = name ? `"${name}"` : 'preview'

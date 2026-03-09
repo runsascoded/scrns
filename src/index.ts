@@ -38,6 +38,8 @@ export type ScreenshotConfig = {
   download?: boolean
   /** Sleep in ms while waiting for download (default: 1000) */
   downloadSleep?: number
+  /** Additional browser launch args for this screenshot */
+  browserArgs?: string[]
 }
 
 export type ScreencastAction =
@@ -77,11 +79,12 @@ export type Config = {
   selector?: string
   loadTimeout?: number
   downloadSleep?: number
+  browserArgs?: string[]
   screenshots: Screens
 }
 
 /** Screenshot entry keys that distinguish a ScreenshotConfig from a nested Screens */
-const SCREENSHOT_KEYS = ['query', 'width', 'height', 'selector', 'loadTimeout', 'path', 'preScreenshotSleep', 'scrollY', 'scrollTo', 'scrollOffset', 'download', 'downloadSleep', 'actions', 'fps', 'gifQuality', 'loop', 'videoCrf'] as const
+const SCREENSHOT_KEYS = ['query', 'width', 'height', 'selector', 'loadTimeout', 'path', 'preScreenshotSleep', 'scrollY', 'scrollTo', 'scrollOffset', 'download', 'downloadSleep', 'actions', 'fps', 'gifQuality', 'loop', 'videoCrf', 'browserArgs'] as const
 
 function isScreens(value: unknown): value is Screens {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -125,12 +128,20 @@ export type ScreenshotsOptions = {
   log?: (message: string) => void
   /** Browser engine (resolved automatically if not provided) */
   engine?: ScrnsEngine
+  /** Additional browser launch args (merged with defaults and per-screenshot args) */
+  browserArgs?: string[]
 }
 
 const DEFAULT_WIDTH = 800
 const DEFAULT_HEIGHT = 560
 const DEFAULT_LOAD_TIMEOUT = 30000
 const DEFAULT_DOWNLOAD_SLEEP = 1000
+
+const BASE_BROWSER_ARGS = [
+  '--no-sandbox',
+  '--disable-skia-runtime-opts',
+  '--force-device-scale-factor=1',
+]
 
 function parseKeys(key: string): string[] {
   return key.split('+')
@@ -413,14 +424,14 @@ export async function takeScreenshots(
   } = options
 
   const engine = options.engine ?? await resolveEngine()
-  const browser = await engine.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-skia-runtime-opts',  // Force baseline Skia code paths for cross-CPU determinism
-      '--force-device-scale-factor=1',
-    ],
-  })
+  // Collect all per-screenshot browserArgs and merge with options-level args
+  const perShotArgs = Object.values(screens).flatMap(s => s.browserArgs ?? [])
+  const args = [
+    ...BASE_BROWSER_ARGS,
+    ...(options.browserArgs ?? []),
+    ...perShotArgs,
+  ]
+  const browser = await engine.launch({ headless: true, args })
   const page = await browser.newPage()
 
   try {
@@ -537,6 +548,7 @@ export async function previewScreenshot(
     defaultLoadTimeout?: number
     log?: (message: string) => void
     engine?: ScrnsEngine
+    browserArgs?: string[]
   },
 ): Promise<PreviewResult> {
   const {
@@ -559,14 +571,12 @@ export async function previewScreenshot(
   const url = `${baseUrl}/${query}`
 
   const engine = options.engine ?? await resolveEngine()
-  const browser = await engine.launch({
-    headless: false,
-    args: [
-      '--no-sandbox',
-      '--disable-skia-runtime-opts',
-      '--force-device-scale-factor=1',
-    ],
-  })
+  const args = [
+    ...BASE_BROWSER_ARGS,
+    ...(options.browserArgs ?? []),
+    ...(config.browserArgs ?? []),
+  ]
+  const browser = await engine.launch({ headless: false, args })
   const page = await browser.newPage()
 
   try {
