@@ -37,6 +37,7 @@ async function loadRawConfig(configPath: string): Promise<Screens | Config> {
 }
 
 type ResolvedConfig = {
+  configPath: string
   screens: Screens
   baseUrl: string
   outputDir: string
@@ -89,6 +90,7 @@ async function loadResolvedConfig(opts: {
   const headless = opts.headful ? false : (configOptions.headless ?? undefined)
 
   return {
+    configPath,
     screens,
     baseUrl,
     outputDir: opts.output ?? configOptions.output ?? './screenshots',
@@ -137,7 +139,7 @@ addSharedOptions(program)
         host: opts.host ?? resolved.baseUrl.replace(/^https?:\/\//, ''),
         https: opts.https,
         output: resolved.outputDir,
-        config: opts.config,
+        config: resolved.configPath,
         engine: resolved.engine,
         selector: resolved.defaultSelector,
         loadTimeout: resolved.defaultLoadTimeout,
