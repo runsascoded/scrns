@@ -4,6 +4,8 @@
 
 Automated screenshots and screencasts (GIF/video) with Puppeteer or Playwright — wait for selectors, configurable viewports, scroll positioning, action timelines, and downloads.
 
+Also available on [GitLab][gl]. Reusable CI integrations: [GitHub Action][gh-v1] (`v1` branch), [GitLab CI component][gl-v1].
+
 ## Install
 ```bash
 pnpm add scrns
@@ -288,6 +290,8 @@ await takeScreenshots({
 [apvd-scrns]: https://github.com/search?q=repo%3Arunsascoded%2Fapvd+scrns&type=code
 [elvis]: https://github.com/Quantum-Accelerators/electrai
 [elvis-scrns]: https://github.com/search?q=repo%3AQuantum-Accelerators%2Felectrai+scrns&type=code
-[GitLab]: https://gitlab.com/runsascoded/js/scrns
+[gl]: https://gitlab.com/runsascoded/js/scrns
+[gh-v1]: https://github.com/runsascoded/scrns/tree/v1
+[gl-v1]: https://gitlab.com/runsascoded/js/scrns/-/tree/v1
 [npm]: https://www.npmjs.com/package/scrns
 [npm-badge]: https://img.shields.io/npm/v/scrns.svg
