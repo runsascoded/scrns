@@ -40,15 +40,24 @@ function getDockerImage(override?: string): string {
   return `mcr.microsoft.com/playwright:v${major}.${minor}.0-noble`
 }
 
+/** True if scrns is running from a local dev checkout (not from node_modules) */
+function isLocalDev(): boolean {
+  return !__dirname.includes('node_modules')
+}
+
 /**
  * Find the scrns project root (where package.json lives).
  * Works whether running from source (`src/`) or built (`dist/`).
  */
 function getScrnsRoot(): string {
-  // __dirname is src/ or dist/; parent should have package.json
   const root = resolve(__dirname, '..')
   if (existsSync(resolve(root, 'package.json'))) return root
   return root
+}
+
+function getScrnsVersion(): string {
+  const pkg = JSON.parse(readFileSync(resolve(getScrnsRoot(), 'package.json'), 'utf8'))
+  return pkg.version
 }
 
 /**
@@ -65,6 +74,26 @@ function packLocal(): string {
   const tarball = resolve(root, output)
   console.error(`Packed local build: ${tarball}`)
   return tarball
+}
+
+const SHA_RE = /^[0-9a-f]{7,40}$/i
+
+/**
+ * Resolve a version shorthand to a full npm install specifier.
+ *
+ * - `0.3.0`           → `scrns@0.3.0`     (npm)
+ * - `gh:abc1234`      → `github:runsascoded/scrns#abc1234`
+ * - `gl:abc1234`      → `gitlab:runsascoded/js/scrns#abc1234`
+ * - `abc1234` (hex)   → `github:runsascoded/scrns#abc1234`
+ * - `github:...#sha`  → passed through as-is
+ * - `gitlab:...#sha`  → passed through as-is
+ */
+function resolveVersionSpec(version: string): string {
+  if (version.startsWith('github:') || version.startsWith('gitlab:')) return version
+  if (version.startsWith('gh:')) return `github:runsascoded/scrns#${version.slice(3)}`
+  if (version.startsWith('gl:')) return `gitlab:runsascoded/js/scrns#${version.slice(3)}`
+  if (SHA_RE.test(version)) return `github:runsascoded/scrns#${version}`
+  return `scrns@${version}`
 }
 
 function rewriteHostForDocker(host: string | number): string {
@@ -85,14 +114,19 @@ export async function runInDocker(opts: DockerOptions): Promise<void> {
   const extraMounts: string[][] = []
 
   if (opts.version) {
-    // Explicit version: npm install directly (npm version, github SHA, tarball URL, etc.)
-    installCmd = `npm install -g 'scrns@${opts.version}'`
-  } else {
-    // Default: pack local build, mount tarball, install from it
+    // Explicit version: resolve shorthand and install
+    const spec = resolveVersionSpec(opts.version)
+    installCmd = `npm install -g '${spec}'`
+  } else if (isLocalDev()) {
+    // Running from local checkout: pack and mount tarball
     const tarball = packLocal()
     const tarballName = basename(tarball)
     extraMounts.push(['-v', `${tarball}:/work/${tarballName}:ro`])
     installCmd = `npm install -g '/work/${tarballName}'`
+  } else {
+    // Installed package: use the same version
+    const version = getScrnsVersion()
+    installCmd = `npm install -g 'scrns@${version}'`
   }
 
   const dockerArgs = [
@@ -110,7 +144,6 @@ export async function runInDocker(opts: DockerOptions): Promise<void> {
     dockerArgs.push('-v', `${configPath}:/work/${configName}:ro`)
   }
 
-  // Mount tarball if using local pack
   for (const mount of extraMounts) {
     dockerArgs.push(...mount)
   }
