@@ -1,0 +1,191 @@
+name: 'scrns'
+description: 'Generate screenshots and check for changes'
+inputs:
+  host:
+    description: 'Hostname or port for the target server'
+    required: true
+  output:
+    description: 'Output directory'
+    default: './screenshots'
+  config:
+    description: 'Path to scrns config file'
+  engine:
+    description: 'Browser engine (playwright or puppeteer)'
+  selector:
+    description: 'Default CSS selector to wait for'
+  load-timeout:
+    description: 'Timeout waiting for selector (ms)'
+  browser-args:
+    description: 'Additional browser launch args (space-separated)'
+  include:
+    description: 'Regex filter for which screenshots to generate'
+  on-diff:
+    description: 'What to do when screenshots change: fail, commit, or none'
+    default: 'fail'
+  upload-artifact:
+    description: 'Upload changed screenshots as artifact on failure'
+    default: 'false'
+  commit-message:
+    description: 'Commit message when on-diff is commit'
+    default: 'Update screenshots'
+  push-branches:
+    description: 'Comma-separated branches to push to (on-diff: commit)'
+  git-user:
+    description: 'Git user name for commits'
+    default: 'GitHub Actions'
+  git-email:
+    description: 'Git email for commits'
+    default: 'github@actions'
+  version:
+    description: 'Pin scrns version (default: use repo dependency or latest)'
+outputs:
+  changed:
+    description: 'Whether screenshots changed ("true" or "false")'
+    value: ${{ steps.diff.outputs.changed }}
+  changed-files:
+    description: 'Changed screenshot files (newline-separated)'
+    value: ${{ steps.diff.outputs.changed-files }}
+  committed:
+    description: 'Whether a commit was created ("true" or "false")'
+    value: ${{ steps.commit.outputs.committed || 'false' }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Detect scrns command
+      id: detect
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.version }}" ]; then
+          echo "Installing scrns@${{ inputs.version }} globally"
+          npm install -g "scrns@${{ inputs.version }}"
+          echo "cmd=scrns" >> "$GITHUB_OUTPUT"
+        elif [ -f package.json ] && grep -q '"scrns"' package.json; then
+          echo "Using project-local scrns"
+          if command -v pnpm &>/dev/null; then
+            echo "cmd=pnpm exec scrns" >> "$GITHUB_OUTPUT"
+          else
+            echo "cmd=npx scrns" >> "$GITHUB_OUTPUT"
+          fi
+        else
+          echo "Installing scrns@latest globally"
+          npm install -g scrns
+          echo "cmd=scrns" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Detect engine
+      id: engine
+      shell: bash
+      run: |
+        ENGINE="${{ inputs.engine }}"
+        if [ -z "$ENGINE" ]; then
+          # Try to detect from config
+          for cfg in scrns.config.ts scrns.config.js scrns.config.json "${{ inputs.config }}"; do
+            if [ -n "$cfg" ] && [ -f "$cfg" ]; then
+              if grep -q 'puppeteer' "$cfg" 2>/dev/null; then
+                ENGINE="puppeteer"
+                break
+              elif grep -q 'playwright' "$cfg" 2>/dev/null; then
+                ENGINE="playwright"
+                break
+              fi
+            fi
+          done
+          ENGINE="${ENGINE:-playwright}"
+        fi
+        echo "engine=$ENGINE" >> "$GITHUB_OUTPUT"
+        echo "Detected engine: $ENGINE"
+
+    - name: Install browser
+      shell: bash
+      run: |
+        if [ "${{ steps.engine.outputs.engine }}" = "playwright" ]; then
+          echo "Installing Playwright Chromium"
+          npx playwright install --with-deps chromium
+        else
+          echo "Puppeteer bundles its own Chrome; skipping browser install"
+        fi
+
+    - name: Run scrns
+      shell: bash
+      run: |
+        ARGS=()
+        ARGS+=(-h "${{ inputs.host }}")
+        ARGS+=(-o "${{ inputs.output }}")
+        if [ -n "${{ inputs.config }}" ]; then
+          ARGS+=(-c "${{ inputs.config }}")
+        fi
+        if [ -n "${{ inputs.engine }}" ]; then
+          ARGS+=(-E "${{ inputs.engine }}")
+        fi
+        if [ -n "${{ inputs.selector }}" ]; then
+          ARGS+=(-s "${{ inputs.selector }}")
+        fi
+        if [ -n "${{ inputs.load-timeout }}" ]; then
+          ARGS+=(-l "${{ inputs.load-timeout }}")
+        fi
+        if [ -n "${{ inputs.include }}" ]; then
+          ARGS+=(-i "${{ inputs.include }}")
+        fi
+        if [ -n "${{ inputs.browser-args }}" ]; then
+          for arg in ${{ inputs.browser-args }}; do
+            ARGS+=(-b "$arg")
+          done
+        fi
+        echo "Running: ${{ steps.detect.outputs.cmd }} ${ARGS[*]}"
+        ${{ steps.detect.outputs.cmd }} "${ARGS[@]}"
+
+    - name: Check for changes
+      id: diff
+      shell: bash
+      run: |
+        CHANGED_FILES=$(git diff --name-only -- "${{ inputs.output }}/")
+        if [ -n "$CHANGED_FILES" ]; then
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "changed-files<<EOF"
+            echo "$CHANGED_FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Screenshots changed:"
+          echo "$CHANGED_FILES"
+        else
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+          echo "changed-files=" >> "$GITHUB_OUTPUT"
+          echo "No screenshot changes detected"
+        fi
+
+    - name: Upload artifact
+      if: inputs.on-diff == 'fail' && steps.diff.outputs.changed == 'true' && inputs.upload-artifact == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: changed-screenshots
+        path: ${{ inputs.output }}/
+
+    - name: Handle diff (fail)
+      if: inputs.on-diff == 'fail' && steps.diff.outputs.changed == 'true'
+      shell: bash
+      run: |
+        echo "::error::Screenshots have changed. Run scrns locally and commit the updated images."
+        git diff --stat -- "${{ inputs.output }}/"
+        exit 1
+
+    - name: Handle diff (commit)
+      id: commit
+      if: inputs.on-diff == 'commit' && steps.diff.outputs.changed == 'true'
+      shell: bash
+      run: |
+        git config user.name "${{ inputs.git-user }}"
+        git config user.email "${{ inputs.git-email }}"
+        git add "${{ inputs.output }}/"
+        git commit -m "${{ inputs.commit-message }}"
+        PUSH_BRANCHES="${{ inputs.push-branches }}"
+        if [ -z "$PUSH_BRANCHES" ]; then
+          PUSH_BRANCHES="${{ github.ref_name }}"
+        fi
+        IFS=',' read -ra BRANCHES <<< "$PUSH_BRANCHES"
+        for branch in "${BRANCHES[@]}"; do
+          branch=$(echo "$branch" | xargs)
+          echo "Pushing to $branch"
+          git push origin HEAD:"$branch"
+        done
+        echo "committed=true" >> "$GITHUB_OUTPUT"
