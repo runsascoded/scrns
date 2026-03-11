@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { takeScreenshots, previewScreenshot, resolveEngine, Screens, Config, ScreenshotConfig, parseConfig, resolveBaseUrl } from './index.js'
 import type { EngineName } from './index.js'
+import { runInDocker } from './docker.js'
 
 const DEFAULT_CONFIGS = [
   'scrns.config.ts',
@@ -46,6 +47,9 @@ type ResolvedConfig = {
   engine?: EngineName
   browserArgs: string[]
   headless?: boolean
+  docker?: boolean
+  dockerImage?: string
+  dockerPlatform?: string
 }
 
 async function loadResolvedConfig(opts: {
@@ -60,6 +64,9 @@ async function loadResolvedConfig(opts: {
   screenshotTimeout?: number
   browserArg?: string[]
   headful?: boolean
+  docker?: boolean
+  dockerImage?: string
+  dockerPlatform?: string
 }): Promise<ResolvedConfig> {
   const configPath = findConfig(opts.config)
   const log = (...args: unknown[]) => console.error(...args)
@@ -92,6 +99,9 @@ async function loadResolvedConfig(opts: {
     engine,
     browserArgs,
     headless,
+    docker: opts.docker ?? configOptions.docker,
+    dockerImage: opts.dockerImage ?? configOptions.dockerImage,
+    dockerPlatform: opts.dockerPlatform ?? configOptions.dockerPlatform,
   }
 }
 
@@ -115,9 +125,32 @@ addSharedOptions(program)
   .name('scrns')
   .description('Take automated screenshots with Playwright/Puppeteer')
   .option('-d, --download-sleep <ms>', 'Sleep while waiting for downloads (default: 1000)', parseInt)
+  .option('-D, --docker', 'Run in Docker for reproducible output')
+  .option('--docker-image <image>', 'Docker image (default: auto-detect from Playwright version)')
+  .option('--docker-platform <platform>', 'Docker platform (default: linux/amd64)')
   .option('-i, --include <regex>', 'Only generate screenshots matching this regex')
   .action(async (opts) => {
     const resolved = await loadResolvedConfig(opts)
+
+    if (resolved.docker) {
+      await runInDocker({
+        host: opts.host ?? resolved.baseUrl.replace(/^https?:\/\//, ''),
+        https: opts.https,
+        output: resolved.outputDir,
+        config: opts.config,
+        engine: resolved.engine,
+        selector: resolved.defaultSelector,
+        loadTimeout: resolved.defaultLoadTimeout,
+        downloadSleep: resolved.defaultDownloadSleep,
+        screenshotTimeout: resolved.defaultScreenshotTimeout,
+        include: opts.include,
+        browserArgs: resolved.browserArgs.length ? resolved.browserArgs : undefined,
+        dockerImage: resolved.dockerImage,
+        dockerPlatform: resolved.dockerPlatform,
+      })
+      return
+    }
+
     const engine = await resolveEngine(resolved.engine)
     const include = opts.include ? new RegExp(opts.include) : undefined
     await takeScreenshots(resolved.screens, {

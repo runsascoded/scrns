@@ -86,6 +86,9 @@ export type Config = {
   browserArgs?: string[]
   headless?: boolean
   screenshotTimeout?: number
+  docker?: boolean
+  dockerImage?: string
+  dockerPlatform?: string
   screenshots: Screens
 }
 
