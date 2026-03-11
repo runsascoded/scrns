@@ -88,4 +88,13 @@ When screenshots change, the action commits and pushes to the specified branches
 5. **Check diffs**: `git diff --name-only` against the output directory.
 6. **Handle diffs**: Based on `on-diff` mode — fail the step, commit+push, or do nothing.
 
+## See also
+
+- [scrns on GitHub][gh] (source + docs)
+- [scrns on GitLab][gl] (source + docs)
+- [GitLab CI component][gl-v1] (equivalent of this action for GitLab CI)
+
 [scrns]: https://www.npmjs.com/package/scrns
+[gh]: https://github.com/runsascoded/scrns
+[gl]: https://gitlab.com/runsascoded/js/scrns
+[gl-v1]: https://gitlab.com/runsascoded/js/scrns/-/tree/v1
