@@ -23,7 +23,7 @@ jobs:
   dist:
     needs: test
     if: github.ref == 'refs/heads/main'
-    uses: runsascoded/npm-dist/.github/workflows/build-dist.yml@main
+    uses: runsascoded/npm-dist/.github/workflows/build-dist.yml@v1
     permissions:
       contents: write
 
