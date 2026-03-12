@@ -1,0 +1,937 @@
+#!/usr/bin/env node
+"use strict";
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+
+// src/cli.ts
+var import_commander = require("commander");
+var import_fs3 = require("fs");
+var import_path3 = require("path");
+
+// src/index.ts
+var import_path = require("path");
+var import_fs = require("fs");
+var import_child_process = require("child_process");
+var gifencModule = __toESM(require("gifenc"), 1);
+var import_pngjs = require("pngjs");
+
+// src/engines/puppeteer.ts
+async function createPuppeteerEngine() {
+  const puppeteer = (await import("puppeteer")).default;
+  return {
+    name: "puppeteer",
+    async launch(opts) {
+      const browser = await puppeteer.launch({
+        headless: opts.headless,
+        args: opts.args
+      });
+      return wrapBrowser(browser);
+    }
+  };
+}
+function wrapBrowser(browser) {
+  return {
+    async newPage() {
+      const page = await browser.newPage();
+      return wrapPage(page);
+    },
+    async close() {
+      await browser.close();
+    }
+  };
+}
+function wrapPage(page) {
+  return {
+    async goto(url) {
+      await page.goto(url);
+    },
+    async setViewportSize(size) {
+      await page.setViewport(size);
+    },
+    async waitForSelector(selector, opts) {
+      await page.waitForSelector(selector, opts);
+    },
+    async screenshot(opts) {
+      const result = await page.screenshot({
+        path: opts?.path,
+        encoding: "binary",
+        timeout: opts?.timeout
+      });
+      return Buffer.from(result);
+    },
+    async evaluate(pageFunction, arg) {
+      if (arg !== void 0) {
+        return page.evaluate(pageFunction, arg);
+      }
+      return page.evaluate(pageFunction);
+    },
+    keyboard: {
+      async down(key) {
+        await page.keyboard.down(key);
+      },
+      async up(key) {
+        await page.keyboard.up(key);
+      },
+      async type(text) {
+        await page.keyboard.type(text);
+      }
+    },
+    mouse: {
+      async click(x, y, opts) {
+        await page.mouse.click(x, y, opts);
+      },
+      async move(x, y) {
+        await page.mouse.move(x, y);
+      },
+      async down(opts) {
+        await page.mouse.down(opts);
+      },
+      async up(opts) {
+        await page.mouse.up(opts);
+      }
+    },
+    async setDownloadPath(dir) {
+      const client = await page.createCDPSession();
+      await client.send("Page.setDownloadBehavior", {
+        behavior: "allow",
+        downloadPath: dir
+      });
+    }
+  };
+}
+
+// src/engines/playwright.ts
+async function createPlaywrightEngine() {
+  const { chromium } = await import("playwright");
+  return {
+    name: "playwright",
+    async launch(opts) {
+      const browser = await chromium.launch({
+        headless: opts.headless,
+        args: opts.args
+      });
+      return wrapBrowser2(browser);
+    }
+  };
+}
+function wrapBrowser2(browser) {
+  return {
+    async newPage() {
+      const page = await browser.newPage();
+      return wrapPage2(page);
+    },
+    async close() {
+      await browser.close();
+    }
+  };
+}
+function wrapPage2(page) {
+  return {
+    async goto(url) {
+      await page.goto(url);
+    },
+    async setViewportSize(size) {
+      await page.setViewportSize(size);
+    },
+    async waitForSelector(selector, opts) {
+      await page.waitForSelector(selector, { ...opts, state: "attached" });
+    },
+    async screenshot(opts) {
+      return page.screenshot({ path: opts?.path, timeout: opts?.timeout });
+    },
+    async evaluate(pageFunction, arg) {
+      if (arg !== void 0) {
+        return page.evaluate(pageFunction, arg);
+      }
+      return page.evaluate(pageFunction);
+    },
+    keyboard: {
+      async down(key) {
+        await page.keyboard.down(key);
+      },
+      async up(key) {
+        await page.keyboard.up(key);
+      },
+      async type(text) {
+        await page.keyboard.type(text);
+      }
+    },
+    mouse: {
+      async click(x, y, opts) {
+        await page.mouse.click(x, y, opts);
+      },
+      async move(x, y) {
+        await page.mouse.move(x, y);
+      },
+      async down(opts) {
+        await page.mouse.down(opts);
+      },
+      async up(opts) {
+        await page.mouse.up(opts);
+      }
+    },
+    async setDownloadPath(dir) {
+      const session = await page.context().newCDPSession(page);
+      await session.send("Page.setDownloadBehavior", {
+        behavior: "allow",
+        downloadPath: dir
+      });
+    }
+  };
+}
+
+// src/engines/resolve.ts
+async function resolveEngine(preference) {
+  if (preference === "playwright") return createPlaywrightEngine();
+  if (preference === "puppeteer") return createPuppeteerEngine();
+  try {
+    return await createPlaywrightEngine();
+  } catch {
+  }
+  try {
+    return await createPuppeteerEngine();
+  } catch {
+  }
+  throw new Error(
+    "No browser engine found. Install either:\n  pnpm add playwright    # recommended\n  pnpm add puppeteer     # alternative"
+  );
+}
+
+// src/index.ts
+var gifenc = "default" in gifencModule && typeof gifencModule.default === "object" ? gifencModule.default : gifencModule;
+var { GIFEncoder, quantize, applyPalette } = gifenc;
+function isScreencast(config) {
+  return "actions" in config && Array.isArray(config.actions);
+}
+var SCREENSHOT_KEYS = ["query", "width", "height", "selector", "loadTimeout", "path", "preScreenshotSleep", "scrollY", "scrollTo", "scrollOffset", "download", "downloadSleep", "actions", "fps", "gifQuality", "loop", "videoCrf", "browserArgs", "headless", "screenshotTimeout"];
+function isScreens(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && !SCREENSHOT_KEYS.some((k) => k in value);
+}
+function parseConfig(config) {
+  if ("screenshots" in config && isScreens(config.screenshots)) {
+    const { screenshots, ...options } = config;
+    return { screens: screenshots, options };
+  }
+  return { screens: config, options: {} };
+}
+function resolveBaseUrl(host, https) {
+  let h = host == null ? "127.0.0.1:3000" : String(host);
+  if (h.match(/^\d+$/)) h = `127.0.0.1:${h}`;
+  return `${https ? "https" : "http"}://${h}`;
+}
+var DEFAULT_WIDTH = 800;
+var DEFAULT_HEIGHT = 560;
+var DEFAULT_LOAD_TIMEOUT = 3e4;
+var DEFAULT_DOWNLOAD_SLEEP = 1e3;
+var DEFAULT_SCREENSHOT_TIMEOUT = 3e4;
+var BASE_BROWSER_ARGS = [
+  "--no-sandbox",
+  "--disable-skia-runtime-opts",
+  "--force-device-scale-factor=1"
+];
+function parseKeys(key) {
+  return key.split("+");
+}
+async function executeActions(page, actions, log) {
+  for (const action of actions) {
+    switch (action.type) {
+      case "wait":
+        log(`  action: wait ${action.duration}ms`);
+        await sleep(action.duration);
+        break;
+      case "keydown":
+        log(`  action: keydown ${action.key}`);
+        for (const k of parseKeys(action.key)) await page.keyboard.down(k);
+        break;
+      case "keyup":
+        log(`  action: keyup ${action.key}`);
+        for (const k of parseKeys(action.key).reverse()) await page.keyboard.up(k);
+        break;
+      case "key": {
+        log(`  action: key ${action.key} ${action.duration}ms`);
+        const keys = parseKeys(action.key);
+        for (const k of keys) await page.keyboard.down(k);
+        await sleep(action.duration);
+        for (const k of keys.reverse()) await page.keyboard.up(k);
+        break;
+      }
+      case "type":
+        log(`  action: type "${action.text}"`);
+        await page.keyboard.type(action.text);
+        break;
+      case "click":
+        log(`  action: click (${action.x}, ${action.y})`);
+        await page.mouse.click(action.x, action.y, { button: action.button ?? "left" });
+        break;
+      case "drag": {
+        log(`  action: drag (${action.from}) \u2192 (${action.to}) ${action.duration}ms`);
+        const button = action.button ?? "left";
+        await page.mouse.move(action.from[0], action.from[1]);
+        await page.mouse.down({ button });
+        const steps = Math.ceil(action.duration / 16);
+        for (let i = 1; i <= steps; i++) {
+          const t = i / steps;
+          const x = action.from[0] + t * (action.to[0] - action.from[0]);
+          const y = action.from[1] + t * (action.to[1] - action.from[1]);
+          await page.mouse.move(x, y);
+          await sleep(16);
+        }
+        await page.mouse.up({ button });
+        break;
+      }
+    }
+  }
+}
+function encodeGif(frames, path, width, height, fps, loop, log) {
+  log(`Encoding GIF: ${frames.length} frames...`);
+  const gif = GIFEncoder();
+  const delay = Math.round(1e3 / fps);
+  for (const frame of frames) {
+    const png = import_pngjs.PNG.sync.read(frame);
+    const { data } = png;
+    const palette = quantize(data, 256);
+    const index = applyPalette(data, palette);
+    gif.writeFrame(index, width, height, { palette, delay });
+  }
+  gif.finish();
+  (0, import_fs.writeFileSync)(path, gif.bytesView());
+  if (!loop) {
+  }
+  log(`Saved screencast: ${path}`);
+}
+function hasAnimateAction(actions) {
+  return actions.some((a) => a.type === "animate");
+}
+var VIDEO_EXTS = [".mp4", ".mkv", ".mov", ".webm"];
+function isVideoExt(path) {
+  return VIDEO_EXTS.some((ext) => path.endsWith(ext));
+}
+function codecForExt(path) {
+  if (path.endsWith(".webm")) return "libvpx-vp9";
+  return "libx264";
+}
+function assertFfmpeg() {
+  try {
+    (0, import_child_process.execFileSync)("ffmpeg", ["-version"], { stdio: "ignore" });
+  } catch {
+    throw new Error("ffmpeg not found. Install it to use video output:\n  brew install ffmpeg    # macOS\n  apt install ffmpeg     # Ubuntu/Debian");
+  }
+}
+function createGifSink(path, width, height, fps, loop, log) {
+  const frames = [];
+  return {
+    write(frame) {
+      frames.push(frame);
+    },
+    finish() {
+      encodeGif(frames, path, width, height, fps, loop, log);
+    }
+  };
+}
+function createVideoSink(path, fps, crf, log) {
+  assertFfmpeg();
+  const codec = codecForExt(path);
+  const args = [
+    "-y",
+    "-f",
+    "image2pipe",
+    "-framerate",
+    String(fps),
+    "-i",
+    "-",
+    "-c:v",
+    codec,
+    "-pix_fmt",
+    "yuv420p"
+  ];
+  if (codec === "libvpx-vp9") {
+    args.push("-crf", String(crf), "-b:v", "0");
+  } else {
+    args.push("-crf", String(crf));
+  }
+  args.push(path);
+  const ffmpeg = (0, import_child_process.spawn)("ffmpeg", args, { stdio: ["pipe", "ignore", "pipe"] });
+  let stderr = "";
+  ffmpeg.stderr.on("data", (data) => {
+    stderr += data.toString();
+  });
+  return {
+    write(frame) {
+      ffmpeg.stdin.write(frame);
+    },
+    async finish() {
+      ffmpeg.stdin.end();
+      await new Promise((resolve4, reject) => {
+        ffmpeg.on("close", (code) => {
+          if (code === 0) {
+            log(`Saved screencast: ${path}`);
+            resolve4();
+          } else {
+            reject(new Error(`ffmpeg exited with code ${code}: ${stderr}`));
+          }
+        });
+        ffmpeg.on("error", reject);
+      });
+    }
+  };
+}
+function createSink(path, width, height, config, log) {
+  const { fps = 15, loop = true, videoCrf = 23 } = config;
+  if (isVideoExt(path)) {
+    return createVideoSink(path, fps, videoCrf, log);
+  }
+  return createGifSink(path, width, height, fps, loop, log);
+}
+async function recordFrameByFrame(page, config, path, width, height, log, screenshotTimeout) {
+  const { actions, fps = 15 } = config;
+  const sink = createSink(path, width, height, config, log);
+  const ssOpts = screenshotTimeout ? { timeout: screenshotTimeout } : void 0;
+  log(`Recording frame-by-frame screencast...`);
+  for (const action of actions) {
+    switch (action.type) {
+      case "animate": {
+        log(`  animate: ${action.frames} frames`);
+        for (let i = 0; i < action.frames; i++) {
+          await page.evaluate(`(${action.eval})(${i}, ${action.frames})`);
+          await page.evaluate(() => new Promise(
+            (r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))
+          ));
+          if (action.frameDelay) await sleep(action.frameDelay);
+          const frame = await page.screenshot(ssOpts);
+          sink.write(frame);
+          if ((i + 1) % 10 === 0 || i === action.frames - 1) {
+            log(`    frame ${i + 1}/${action.frames}`);
+          }
+        }
+        break;
+      }
+      case "wait": {
+        const staticFrames = Math.ceil(action.duration * fps / 1e3);
+        log(`  wait: ${action.duration}ms (${staticFrames} static frames)`);
+        const frame = await page.screenshot(ssOpts);
+        for (let i = 0; i < staticFrames; i++) sink.write(frame);
+        break;
+      }
+      default:
+        await executeActions(page, [action], log);
+        break;
+    }
+  }
+  await sink.finish();
+}
+async function recordScreencastRealtime(page, config, path, width, height, log, screenshotTimeout) {
+  const { actions, fps = 15 } = config;
+  const frameInterval = 1e3 / fps;
+  const sink = createSink(path, width, height, config, log);
+  const ssOpts = screenshotTimeout ? { timeout: screenshotTimeout } : void 0;
+  await page.evaluate(() => document.dispatchEvent(new Event("scrns:capture-start")));
+  let recording = true;
+  const captureLoop = (async () => {
+    while (recording) {
+      const start = Date.now();
+      const frame = await page.screenshot(ssOpts);
+      sink.write(frame);
+      const elapsed = Date.now() - start;
+      if (elapsed < frameInterval) await sleep(frameInterval - elapsed);
+    }
+  })();
+  await executeActions(page, actions, log);
+  recording = false;
+  await captureLoop;
+  await sink.finish();
+}
+var SWIFTSHADER_ARGS = ["--use-angle=swiftshader", "--use-gl=swiftshader"];
+async function takeScreenshots(screens, options) {
+  const {
+    baseUrl,
+    outputDir,
+    defaultSelector,
+    defaultLoadTimeout = DEFAULT_LOAD_TIMEOUT,
+    defaultDownloadSleep = DEFAULT_DOWNLOAD_SLEEP,
+    defaultScreenshotTimeout = DEFAULT_SCREENSHOT_TIMEOUT,
+    include,
+    log = console.log
+  } = options;
+  const defaultHeadless = options.headless ?? true;
+  const engine = options.engine ?? await resolveEngine();
+  const entries = Object.entries(screens).filter(([name]) => !include || name.match(include));
+  const groups = /* @__PURE__ */ new Map();
+  for (const entry of entries) {
+    const headless = entry[1].headless ?? defaultHeadless;
+    if (!groups.has(headless)) groups.set(headless, []);
+    groups.get(headless).push(entry);
+  }
+  for (const [headless, groupEntries] of groups) {
+    const perShotArgs = groupEntries.flatMap(([, s]) => s.browserArgs ?? []);
+    let args = [
+      ...BASE_BROWSER_ARGS,
+      ...options.browserArgs ?? [],
+      ...perShotArgs
+    ];
+    if (!headless) {
+      const explicitArgs = new Set(groupEntries.flatMap(([, s]) => s.browserArgs ?? []));
+      args = args.filter((a) => !SWIFTSHADER_ARGS.includes(a) || explicitArgs.has(a));
+    }
+    const browser = await engine.launch({ headless, args });
+    const page = await browser.newPage();
+    try {
+      for (const [name, config] of groupEntries) {
+        const screenshotTimeout = config.screenshotTimeout ?? defaultScreenshotTimeout;
+        const ssOpts = { timeout: screenshotTimeout };
+        const {
+          path: configPath,
+          query = "",
+          width = DEFAULT_WIDTH,
+          height = DEFAULT_HEIGHT,
+          selector = defaultSelector,
+          loadTimeout = defaultLoadTimeout,
+          preScreenshotSleep = 0,
+          scrollY = 0,
+          scrollTo,
+          scrollOffset = 0,
+          download = false,
+          downloadSleep = defaultDownloadSleep
+        } = config;
+        const url = `${baseUrl}/${query}`;
+        const defaultExt = isScreencast(config) ? ".gif" : ".png";
+        const defaultPath = `${name}${defaultExt}`;
+        const path = configPath ? (0, import_path.isAbsolute)(configPath) ? configPath : (0, import_path.resolve)(outputDir, configPath) : (0, import_path.resolve)(outputDir, defaultPath);
+        (0, import_fs.mkdirSync)((0, import_path.dirname)(path), { recursive: true });
+        if (download) {
+          log(`Setting download behavior to ${outputDir}`);
+          await page.setDownloadPath(outputDir);
+        }
+        log(`Loading ${url}`);
+        await page.goto(url);
+        log(`Loaded ${url}`);
+        await page.setViewportSize({ width, height });
+        log("Set viewport");
+        if (selector) {
+          await page.waitForSelector(selector, { timeout: loadTimeout });
+          log(`Found selector: ${selector}`);
+        }
+        if (scrollTo) {
+          const scrolled = await page.evaluate(
+            ([sel, offset]) => {
+              const el = document.querySelector(sel);
+              if (!el) return null;
+              const rect = el.getBoundingClientRect();
+              const y = window.scrollY + rect.top - offset;
+              window.scrollTo(0, y);
+              return y;
+            },
+            [scrollTo, scrollOffset]
+          );
+          if (scrolled !== null) {
+            log(`Scrolled to ${scrollTo} at Y: ${scrolled}`);
+          } else {
+            log(`Warning: scrollTo selector "${scrollTo}" not found`);
+          }
+        } else if (scrollY > 0) {
+          await page.evaluate((y) => window.scrollTo(0, y), scrollY);
+          log(`Scrolled to Y: ${scrollY}`);
+        }
+        if (preScreenshotSleep > 0) {
+          await sleep(preScreenshotSleep);
+        }
+        if (download) {
+          await sleep(downloadSleep);
+          log("Download complete");
+        } else if (isScreencast(config)) {
+          if (hasAnimateAction(config.actions)) {
+            await recordFrameByFrame(page, config, path, width, height, log, screenshotTimeout);
+          } else {
+            await recordScreencastRealtime(page, config, path, width, height, log, screenshotTimeout);
+          }
+        } else {
+          ssOpts.path = path;
+          await page.screenshot(ssOpts);
+          log(`Saved screenshot: ${path}`);
+        }
+      }
+    } finally {
+      await browser.close();
+    }
+  }
+}
+function sleep(ms) {
+  return new Promise((resolve4) => setTimeout(resolve4, ms));
+}
+async function previewScreenshot(config, options) {
+  const {
+    baseUrl,
+    outputDir,
+    defaultSelector,
+    defaultLoadTimeout = DEFAULT_LOAD_TIMEOUT,
+    log = (...args2) => console.error(...args2)
+  } = options;
+  const {
+    path: configPath,
+    query = "",
+    width = DEFAULT_WIDTH,
+    height = DEFAULT_HEIGHT,
+    selector = defaultSelector,
+    loadTimeout = defaultLoadTimeout
+  } = config;
+  const url = `${baseUrl}/${query}`;
+  const engine = options.engine ?? await resolveEngine();
+  const args = [
+    ...BASE_BROWSER_ARGS,
+    ...options.browserArgs ?? [],
+    ...config.browserArgs ?? []
+  ];
+  const browser = await engine.launch({ headless: false, args });
+  const page = await browser.newPage();
+  try {
+    await page.setViewportSize({ width, height });
+    log(`Loading ${url}`);
+    await page.goto(url);
+    if (selector) {
+      await page.waitForSelector(selector, { timeout: loadTimeout });
+      log(`Found selector: ${selector}`);
+    }
+    await page.evaluate(() => {
+      window.addEventListener("keydown", (e) => {
+        if (e.ctrlKey && e.shiftKey && e.key === "S") {
+          e.preventDefault();
+          window.__scrns_capture = true;
+        }
+      });
+    });
+    log("Press Enter here or Ctrl+Shift+S in the browser to capture");
+    await Promise.race([
+      new Promise((resolve4) => {
+        process.stdin.setRawMode?.(false);
+        process.stdin.once("data", () => resolve4());
+      }),
+      (async () => {
+        while (true) {
+          const captured = await page.evaluate(() => window.__scrns_capture);
+          if (captured) return;
+          await sleep(200);
+        }
+      })()
+    ]);
+    const state = await page.evaluate(() => ({
+      url: window.location.href,
+      query: window.location.search + window.location.hash,
+      width: window.innerWidth,
+      height: window.innerHeight
+    }));
+    const defaultPath = `preview.png`;
+    const outPath = configPath ? (0, import_path.isAbsolute)(configPath) ? configPath : (0, import_path.resolve)(outputDir, configPath) : (0, import_path.resolve)(outputDir, defaultPath);
+    (0, import_fs.mkdirSync)((0, import_path.dirname)(outPath), { recursive: true });
+    await page.screenshot({ path: outPath });
+    log(`Saved screenshot: ${outPath}`);
+    return state;
+  } finally {
+    await browser.close();
+  }
+}
+
+// src/docker.ts
+var import_child_process2 = require("child_process");
+var import_module = require("module");
+var import_fs2 = require("fs");
+var import_path2 = require("path");
+var import_url = require("url");
+var import_meta = {};
+var __filename = (0, import_url.fileURLToPath)(import_meta.url);
+var __dirname = (0, import_path2.dirname)(__filename);
+var require2 = (0, import_module.createRequire)(import_meta.url);
+function getPlaywrightVersion() {
+  const pwPkg = require2.resolve("playwright/package.json");
+  const { version } = JSON.parse((0, import_fs2.readFileSync)(pwPkg, "utf8"));
+  return version;
+}
+function getDockerImage(override) {
+  if (override) return override;
+  const version = getPlaywrightVersion();
+  const [major, minor] = version.split(".");
+  return `mcr.microsoft.com/playwright:v${major}.${minor}.0-noble`;
+}
+function isLocalDev() {
+  return !__dirname.includes("node_modules");
+}
+function getScrnsRoot() {
+  const root = (0, import_path2.resolve)(__dirname, "..");
+  if ((0, import_fs2.existsSync)((0, import_path2.resolve)(root, "package.json"))) return root;
+  return root;
+}
+function getScrnsVersion() {
+  const pkg = JSON.parse((0, import_fs2.readFileSync)((0, import_path2.resolve)(getScrnsRoot(), "package.json"), "utf8"));
+  return pkg.version;
+}
+function packLocal() {
+  const root = getScrnsRoot();
+  const output = (0, import_child_process2.execFileSync)("npm", ["pack", "--pack-destination", "."], {
+    cwd: root,
+    encoding: "utf8"
+  }).trim();
+  const tarball = (0, import_path2.resolve)(root, output);
+  console.error(`Packed local build: ${tarball}`);
+  return tarball;
+}
+var SHA_RE = /^[0-9a-f]{7,40}$/i;
+function resolveVersionSpec(version) {
+  if (version.startsWith("github:") || version.startsWith("gitlab:")) return version;
+  if (version.startsWith("gh:")) return `github:runsascoded/scrns#${version.slice(3)}`;
+  if (version.startsWith("gl:")) return `gitlab:runsascoded/js/scrns#${version.slice(3)}`;
+  if (SHA_RE.test(version)) return `github:runsascoded/scrns#${version}`;
+  return `scrns@${version}`;
+}
+function rewriteHostForDocker(host) {
+  let h = String(host);
+  if (h.match(/^\d+$/)) h = `host.docker.internal:${h}`;
+  else h = h.replace(/^(localhost|127\.0\.0\.1)/, "host.docker.internal");
+  return h;
+}
+async function runInDocker(opts) {
+  const image = getDockerImage(opts.dockerImage);
+  const platform = opts.dockerPlatform ?? "linux/amd64";
+  const outputDir = (0, import_path2.resolve)(opts.output);
+  const host = rewriteHostForDocker(opts.host);
+  let installCmd;
+  const extraMounts = [];
+  if (opts.version) {
+    const spec = resolveVersionSpec(opts.version);
+    installCmd = `npm install -g '${spec}'`;
+  } else if (isLocalDev()) {
+    const tarball = packLocal();
+    const tarballName = (0, import_path2.basename)(tarball);
+    extraMounts.push(["-v", `${tarball}:/work/${tarballName}:ro`]);
+    installCmd = `npm install -g '/work/${tarballName}'`;
+  } else {
+    const version = getScrnsVersion();
+    installCmd = `npm install -g 'scrns@${version}'`;
+  }
+  const dockerArgs = [
+    "run",
+    "--rm",
+    "--platform",
+    platform,
+    "--add-host=host.docker.internal:host-gateway",
+    "-v",
+    `${outputDir}:/work/output`,
+    "-w",
+    "/work"
+  ];
+  if (opts.config) {
+    const configPath = (0, import_path2.resolve)(opts.config);
+    const configName = (0, import_path2.basename)(configPath);
+    dockerArgs.push("-v", `${configPath}:/work/${configName}:ro`);
+  }
+  for (const mount of extraMounts) {
+    dockerArgs.push(...mount);
+  }
+  dockerArgs.push(image);
+  const scrnsArgs = ["-h", host, "-o", "/work/output"];
+  if (opts.config) {
+    scrnsArgs.push("-c", `/work/${(0, import_path2.basename)((0, import_path2.resolve)(opts.config))}`);
+  }
+  if (opts.engine) scrnsArgs.push("-E", opts.engine);
+  if (opts.selector) scrnsArgs.push("-s", opts.selector);
+  if (opts.loadTimeout != null) scrnsArgs.push("-l", String(opts.loadTimeout));
+  if (opts.downloadSleep != null) scrnsArgs.push("-d", String(opts.downloadSleep));
+  if (opts.screenshotTimeout != null) scrnsArgs.push("-T", String(opts.screenshotTimeout));
+  if (opts.include) scrnsArgs.push("-i", opts.include);
+  if (opts.https) scrnsArgs.push("--https");
+  if (opts.browserArgs) {
+    for (const arg of opts.browserArgs) {
+      scrnsArgs.push("-b", arg);
+    }
+  }
+  const shellCmd = `${installCmd} && scrns ${scrnsArgs.map((a) => `'${a}'`).join(" ")}`;
+  dockerArgs.push("sh", "-c", shellCmd);
+  console.error(`Docker image: ${image}`);
+  console.error(`Platform: ${platform}`);
+  console.error(`Install: ${installCmd}`);
+  console.error(`Running: scrns ${scrnsArgs.join(" ")}`);
+  const child = (0, import_child_process2.spawn)("docker", dockerArgs, {
+    stdio: ["ignore", "inherit", "inherit"]
+  });
+  const code = await new Promise((resolve4) => {
+    child.on("close", resolve4);
+  });
+  if (code !== 0) {
+    throw new Error(`Docker process exited with code ${code}`);
+  }
+}
+
+// src/cli.ts
+var DEFAULT_CONFIGS = [
+  "scrns.config.ts",
+  "scrns.config.js",
+  "scrns.config.json"
+];
+function findConfig(configOpt) {
+  if (configOpt) {
+    return (0, import_path3.resolve)(configOpt);
+  }
+  for (const name of DEFAULT_CONFIGS) {
+    const path = (0, import_path3.resolve)(name);
+    if ((0, import_fs3.existsSync)(path)) {
+      return path;
+    }
+  }
+  throw new Error(`No config file found. Tried: ${DEFAULT_CONFIGS.join(", ")}`);
+}
+async function loadRawConfig(configPath) {
+  if (configPath.endsWith(".json")) {
+    const content = (0, import_fs3.readFileSync)(configPath, "utf-8");
+    return JSON.parse(content);
+  }
+  const module2 = await import(configPath);
+  return module2.default || module2.screens || module2;
+}
+async function loadResolvedConfig(opts) {
+  const configPath = findConfig(opts.config);
+  const log = (...args) => console.error(...args);
+  log(`Using config: ${configPath}`);
+  const rawConfig = await loadRawConfig(configPath);
+  const { screens, options: configOptions } = parseConfig(rawConfig);
+  const host = opts.host ?? configOptions.host;
+  const https = opts.https ?? configOptions.https;
+  const baseUrl = resolveBaseUrl(host, https);
+  const engine = opts.engine ?? configOptions.engine;
+  const browserArgs = [
+    ...configOptions.browserArgs ?? [],
+    ...opts.browserArg ?? []
+  ];
+  const headless = opts.headful ? false : configOptions.headless ?? void 0;
+  return {
+    configPath,
+    screens,
+    baseUrl,
+    outputDir: opts.output ?? configOptions.output ?? "./screenshots",
+    defaultSelector: opts.selector ?? configOptions.selector,
+    defaultLoadTimeout: opts.loadTimeout ?? configOptions.loadTimeout,
+    defaultDownloadSleep: opts.downloadSleep ?? configOptions.downloadSleep,
+    defaultScreenshotTimeout: opts.screenshotTimeout ?? configOptions.screenshotTimeout,
+    engine,
+    browserArgs,
+    headless,
+    docker: opts.docker ?? configOptions.docker,
+    dockerImage: opts.dockerImage ?? configOptions.dockerImage,
+    dockerPlatform: opts.dockerPlatform ?? configOptions.dockerPlatform
+  };
+}
+function addSharedOptions(cmd) {
+  return cmd.option("-c, --config <path>", "Path to config file (default: scrns.config.{ts,js,json})").option("-b, --browser-arg <arg>", "Additional browser launch arg (repeatable)", (val, prev) => [...prev, val], []).option("-E, --engine <name>", "Browser engine: puppeteer or playwright (default: auto-detect)").option("-h, --host <host>", "Hostname or port (numeric port maps to 127.0.0.1:port)").option("-H, --headful", "Run browser in headful mode (override config headless)").option("-l, --load-timeout <ms>", "Timeout waiting for selector (default: 30000)", parseInt).option("-o, --output <dir>", "Output directory (default: ./screenshots)").option("-s, --selector <css>", "Default CSS selector to wait for").option("-T, --screenshot-timeout <ms>", "Timeout per screenshot capture (default: 30000)", parseInt).option("--https", "Use HTTPS instead of HTTP");
+}
+addSharedOptions(import_commander.program).name("scrns").description("Take automated screenshots with Playwright/Puppeteer").option("-d, --download-sleep <ms>", "Sleep while waiting for downloads (default: 1000)", parseInt).option("-D, --docker", "Run in Docker for reproducible output").option("--docker-image <image>", "Docker image (default: auto-detect from Playwright version)").option("--docker-platform <platform>", "Docker platform (default: linux/amd64)").option("--docker-scrns <ver>", "scrns version for Docker (npm version, SHA, gh:<sha>, gl:<sha>)").option("-i, --include <regex>", "Only generate screenshots matching this regex").action(async (opts) => {
+  const resolved = await loadResolvedConfig(opts);
+  if (resolved.docker) {
+    await runInDocker({
+      host: opts.host ?? resolved.baseUrl.replace(/^https?:\/\//, ""),
+      https: opts.https,
+      output: resolved.outputDir,
+      config: resolved.configPath,
+      engine: resolved.engine,
+      selector: resolved.defaultSelector,
+      loadTimeout: resolved.defaultLoadTimeout,
+      downloadSleep: resolved.defaultDownloadSleep,
+      screenshotTimeout: resolved.defaultScreenshotTimeout,
+      include: opts.include,
+      browserArgs: resolved.browserArgs.length ? resolved.browserArgs : void 0,
+      dockerImage: resolved.dockerImage,
+      dockerPlatform: resolved.dockerPlatform,
+      version: opts.dockerScrns
+    });
+    return;
+  }
+  const engine = await resolveEngine(resolved.engine);
+  const include = opts.include ? new RegExp(opts.include) : void 0;
+  await takeScreenshots(resolved.screens, {
+    baseUrl: resolved.baseUrl,
+    outputDir: resolved.outputDir,
+    defaultSelector: resolved.defaultSelector,
+    defaultLoadTimeout: resolved.defaultLoadTimeout,
+    defaultDownloadSleep: resolved.defaultDownloadSleep,
+    defaultScreenshotTimeout: resolved.defaultScreenshotTimeout,
+    include,
+    engine,
+    browserArgs: resolved.browserArgs,
+    headless: resolved.headless
+  });
+});
+var previewCmd = import_commander.program.command("preview [name]").alias("record").description("Open headful browser for interactive screenshot composition").option("--url <url>", "URL to open (overrides config entry)");
+addSharedOptions(previewCmd).action(async (name, cmdOpts) => {
+  const log = (...args) => console.error(...args);
+  let config;
+  let baseUrl;
+  let outputDir;
+  let defaultSelector;
+  let defaultLoadTimeout;
+  let engineName;
+  let browserArgs = [];
+  if (cmdOpts.url) {
+    const parsed = new URL(cmdOpts.url);
+    baseUrl = `${parsed.protocol}//${parsed.host}`;
+    config = {
+      query: parsed.pathname.slice(1) + parsed.search + parsed.hash
+    };
+    outputDir = cmdOpts.output ?? "./screenshots";
+    defaultSelector = cmdOpts.selector;
+    defaultLoadTimeout = cmdOpts.loadTimeout;
+    engineName = cmdOpts.engine;
+    browserArgs = cmdOpts.browserArg ?? [];
+  } else {
+    const resolved = await loadResolvedConfig(cmdOpts);
+    baseUrl = resolved.baseUrl;
+    outputDir = resolved.outputDir;
+    defaultSelector = resolved.defaultSelector;
+    defaultLoadTimeout = resolved.defaultLoadTimeout;
+    engineName = resolved.engine;
+    browserArgs = resolved.browserArgs;
+    if (name) {
+      config = resolved.screens[name];
+      if (!config) {
+        log(`Entry "${name}" not found in config. Available: ${Object.keys(resolved.screens).join(", ")}`);
+        process.exit(1);
+      }
+      if (!config.path) {
+        config = { ...config, path: `${name}.png` };
+      }
+    } else {
+      config = {};
+    }
+  }
+  const engine = await resolveEngine(engineName);
+  const result = await previewScreenshot(config, {
+    baseUrl,
+    outputDir,
+    defaultSelector,
+    defaultLoadTimeout,
+    log,
+    engine,
+    browserArgs
+  });
+  const label = name ? `"${name}"` : "preview";
+  log(`
+Captured ${label}:`);
+  log(`  query: '${result.query}'`);
+  log(`  width: ${result.width}`);
+  log(`  height: ${result.height}`);
+});
+import_commander.program.parse();
