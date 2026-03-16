@@ -53,6 +53,8 @@ export type ScreencastAction =
   | { type: 'key', key: string, duration: number }
   | { type: 'type', text: string }
   | { type: 'click', x: number, y: number, button?: 'left' | 'right' }
+  | { type: 'hover', x: number, y: number }
+  | { type: 'hover', selector: string, index?: number }
   | { type: 'drag', from: [number, number], to: [number, number], duration: number, button?: 'left' | 'right' }
   | { type: 'animate', frames: number, eval: string, frameDelay?: number }
 
@@ -192,6 +194,31 @@ async function executeActions(
         log(`  action: type "${action.text}"`)
         await page.keyboard.type(action.text)
         break
+      case 'hover': {
+        if ('selector' in action) {
+          const idx = action.index ?? 0
+          const pos = await page.evaluate(
+            ([sel, i]: [string, number]) => {
+              const els = document.querySelectorAll(sel)
+              const el = els[i]
+              if (!el) return null
+              const rect = el.getBoundingClientRect()
+              return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+            },
+            [action.selector, idx] as [string, number],
+          )
+          if (pos) {
+            log(`  action: hover "${action.selector}"[${idx}] → (${pos.x}, ${pos.y})`)
+            await page.mouse.move(pos.x, pos.y)
+          } else {
+            log(`  action: hover "${action.selector}"[${idx}] — not found`)
+          }
+        } else {
+          log(`  action: hover (${action.x}, ${action.y})`)
+          await page.mouse.move(action.x, action.y)
+        }
+        break
+      }
       case 'click':
         log(`  action: click (${action.x}, ${action.y})`)
         await page.mouse.click(action.x, action.y, { button: action.button ?? 'left' })
