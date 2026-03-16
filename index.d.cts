@@ -100,6 +100,14 @@ type ScreencastAction = {
     y: number;
     button?: 'left' | 'right';
 } | {
+    type: 'hover';
+    x: number;
+    y: number;
+} | {
+    type: 'hover';
+    selector: string;
+    index?: number;
+} | {
     type: 'drag';
     from: [number, number];
     to: [number, number];
