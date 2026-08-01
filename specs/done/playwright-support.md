@@ -1,6 +1,6 @@
 # Playwright Engine Support for `scrns`
 
-**Phase 1 status**: Implemented. Engine abstraction in place, both adapters working, `--engine`/`-E` CLI flag and `engine` config option added. Puppeteer remains a regular dependency; playwright is an optional peer dependency.
+**Status**: Complete (v0.4.0). Both phases implemented: engine abstraction with both adapters, `--engine`/`-E` CLI flag and `engine` config option, and the dependency inversion — Playwright is the regular dependency and default engine; Puppeteer is an optional peer.
 
 ## Motivation
 
@@ -12,20 +12,20 @@ Let `scrns` work with either Puppeteer or Playwright as the browser engine, with
 
 ## Design: Peer Dependencies + Optional Import
 
-### Package structure (Phase 1 — current)
+### Package structure (final — Phase 2)
 
-Puppeteer remains a regular dependency. Playwright is an optional peer dependency:
+Playwright is a regular dependency. Puppeteer is an optional peer dependency:
 
 ```json
 {
   "peerDependencies": {
-    "playwright": ">=1.40"
+    "puppeteer": ">=20"
   },
   "peerDependenciesMeta": {
-    "playwright": { "optional": true }
+    "puppeteer": { "optional": true }
   },
   "dependencies": {
-    "puppeteer": "^23.11.1"
+    "playwright": "^1.50.0"
   }
 }
 ```
@@ -36,7 +36,7 @@ At runtime, resolve which engine to use:
 
 1. **CLI flag**: `scrns -E playwright` or `scrns --engine puppeteer`
 2. **Config**: `{ engine: "playwright", screenshots: { ... } }`
-3. **Auto-detect**: try puppeteer first (since it's still a regular dep), fall back to playwright. Error if neither is found.
+3. **Auto-detect**: try playwright first (the regular dep), fall back to puppeteer. Error if neither is found.
 
 ### Engine abstraction
 
@@ -92,12 +92,11 @@ The `ScrnsPage.evaluate` signature uses a single `arg` parameter (matching Playw
 - Added `-E`/`--engine` CLI flag and `engine` config option
 - All 20 existing tests pass unchanged
 
-### Phase 2: Peer dependency (next major or minor)
-- Move `puppeteer` from `dependencies` to optional `peerDependencies`
-- Update docs to show both installation paths
-- Existing users: `pnpm add puppeteer` to keep current behavior
-- New users: can choose either
-- Consider switching auto-detect order to playwright-first
+### Phase 2: Dependency inversion (v0.4.0) — DONE
+- Moved `puppeteer` from `dependencies` to optional `peerDependencies`
+- Made `playwright` a regular dependency and switched auto-detect to playwright-first
+- Updated docs to show both installation paths
+- Existing users: `pnpm add puppeteer` to keep prior behavior (or rely on the Playwright default)
 
 ## Download handling
 
@@ -109,9 +108,8 @@ The `preview` command launches a headful browser. Both Puppeteer and Playwright 
 
 ## Testing
 
-- Existing tests all pass with the engine abstraction (using Puppeteer via auto-detect)
-- TODO: Add integration test that runs with Playwright when installed
-- TODO: CI matrix testing with each engine separately
+- E2e suite runs `describe.each(availableEngines)` — every test executes against both engines when both are installed
+- CI installs both browsers (`playwright install chromium` + `puppeteer browsers install chrome`) so the full dual-engine matrix runs on every push
 
 ## Docker / CI implications
 

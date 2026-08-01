@@ -1,5 +1,7 @@
 # Screencast support for `scrns`
 
+**Status**: Implemented (GIF, WebM, and frame-accurate video output; `wait`/`key`/`keydown`/`keyup`/`type`/`click`/`hover`/`drag`/`animate` actions).
+
 ## Summary
 
 Screencast (screen recording) support alongside existing screenshot capture. A `ScreencastConfig` type extends the current config with an `actions` array — a timeline of keyboard/mouse inputs and waits that Puppeteer performs while capturing frames. Output is GIF (primary) or WebM.
@@ -165,6 +167,6 @@ Test fixture (`test/screencast-fixture.html`): page where Space key cycles backg
 
 ## Future extensions
 
-- **`--headful` flag** for debugging screencasts with a visible browser
+- ~~**`--headful` flag** for debugging screencasts with a visible browser~~ — shipped as `-H`/`--headful`
 - **Easing functions** for drag actions (ease-in-out mouse movement)
 - **Composite actions**: `{ type: 'sequence', actions: [...], parallel: true }` for simultaneous key + mouse

@@ -1,5 +1,7 @@
 # Frame-accurate video output via ffmpeg
 
+**Status**: Implemented. `.mp4`/`.mkv`/`.mov` → H.264, `.webm` → VP9; e2e tests assert frame count, codec, and idempotency.
+
 ## Summary
 
 Add a fourth recording mode: deterministic frame capture (like GIF mode) piped to ffmpeg for proper video codec output (H.264/VP9). This gives jitter-free recordings at modern compression ratios, from which GIFs can be derived downstream.

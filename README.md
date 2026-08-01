@@ -2,7 +2,7 @@
 
 [![npm version][npm-badge]][npm]
 
-Automated screenshots and screencasts (GIF/video) with Puppeteer or Playwright — wait for selectors, configurable viewports, scroll positioning, action timelines, and downloads.
+Automated screenshots and screencasts (GIF/video) with Playwright or Puppeteer — wait for selectors, configurable viewports, scroll positioning, action timelines, and downloads.
 
 Also available on [GitLab][gl]. Reusable CI integrations: [GitHub Action][gh-v1] (`v1` branch), [GitLab CI component][gl-v1].
 
@@ -13,12 +13,18 @@ pnpm add scrns
 npm install scrns
 ```
 
-Puppeteer is included by default. To use [Playwright] instead (or alongside):
+[Playwright] is included by default; install its Chromium binary once per machine:
 ```bash
-pnpm add playwright
+pnpm exec playwright install chromium
+```
+
+To use [Puppeteer] instead (or alongside; it downloads Chrome automatically on install):
+```bash
+pnpm add puppeteer
 ```
 
 [Playwright]: https://playwright.dev/
+[Puppeteer]: https://pptr.dev/
 
 ## CLI Usage
 ```bash
@@ -28,14 +34,21 @@ scrns [options]
 ### Options
 | Flag | Description |
 |------|-------------|
+| `-b, --browser-arg <arg>` | Additional browser launch arg (repeatable) |
 | `-c, --config <path>` | Config file path (default: `scrns.config.{ts,js,json}`) |
 | `-d, --download-sleep <ms>` | Sleep while waiting for downloads (default: 1000) |
-| `-E, --engine <name>` | Browser engine: `puppeteer` or `playwright` (default: auto-detect) |
+| `-D, --docker` | Run in Docker for reproducible output (see [Docker mode](#docker-mode)) |
+| `--docker-image <image>` | Docker image (default: auto-detect from Playwright version) |
+| `--docker-platform <platform>` | Docker platform (default: `linux/amd64`) |
+| `--docker-scrns <ver>` | scrns version for Docker (npm version, SHA, `gh:<sha>`, `gl:<sha>`) |
+| `-E, --engine <name>` | Browser engine: `playwright` or `puppeteer` (default: auto-detect, prefers Playwright) |
 | `-h, --host <host>` | Hostname or port (numeric port maps to `127.0.0.1:port`) |
+| `-H, --headful` | Run browser in headful mode (override config `headless`) |
 | `-i, --include <regex>` | Only generate screenshots matching this regex |
 | `-l, --load-timeout <ms>` | Timeout waiting for selector (default: 30000) |
 | `-o, --output <dir>` | Output directory (default: `./screenshots`) |
 | `-s, --selector <css>` | Default CSS selector to wait for |
+| `-T, --screenshot-timeout <ms>` | Timeout per screenshot capture (default: 30000) |
 | `--https` | Use HTTPS instead of HTTP |
 
 ### Example
@@ -49,8 +62,8 @@ scrns -h 8080 -c my-config.ts
 # Filter to specific screenshots
 scrns -i "home|about"
 
-# Use Playwright instead of Puppeteer
-scrns -E playwright
+# Use Puppeteer instead of Playwright
+scrns -E puppeteer
 ```
 
 ### Preview Mode
@@ -72,6 +85,18 @@ Captured "og":
   width: 1200
   height: 800
 ```
+
+### Docker Mode
+
+Screenshots rendered on macOS differ from Linux CI output (fonts, antialiasing). `scrns -D`/`--docker` runs the capture inside a `mcr.microsoft.com/playwright` container matching the GHA runner environment, so locally-generated screenshots are byte-identical to CI:
+
+```bash
+scrns -D
+```
+
+- The image defaults to `mcr.microsoft.com/playwright:v<version>-noble`, matching the installed Playwright version; override with `--docker-image`.
+- When run from a scrns checkout (local dev), the local build is packed and mounted; otherwise the installed version is reused. Pin explicitly with `--docker-scrns <ver>` (npm version, bare SHA, or `gh:<sha>` / `gl:<sha>`).
+- `docker`, `dockerImage`, and `dockerPlatform` can also be set in the config file.
 
 ## Config File
 
@@ -102,7 +127,7 @@ Or a `Config` with top-level options and a `screenshots` key, so that `host`, `o
 import { Config } from 'scrns'
 
 const config: Config = {
-  engine: 'playwright',  // or 'puppeteer' (default: auto-detect)
+  engine: 'playwright',  // or 'puppeteer' (default: auto-detect, prefers Playwright)
   host: 3456,
   output: 'public/img/screenshots',
   selector: '.app',
@@ -115,7 +140,7 @@ const config: Config = {
 export default config
 ```
 
-Top-level config options (`engine`, `host`, `https`, `output`, `selector`, `loadTimeout`, `downloadSleep`) are overridden by their corresponding CLI flags when both are specified.
+Top-level config options (`engine`, `host`, `https`, `output`, `selector`, `loadTimeout`, `downloadSleep`, `browserArgs`, `headless`, `screenshotTimeout`, `docker`, `dockerImage`, `dockerPlatform`) are overridden by their corresponding CLI flags when both are specified.
 
 ### Config Options
 
@@ -133,6 +158,9 @@ Top-level config options (`engine`, `host`, `https`, `output`, `selector`, `load
 | `scrollOffset` | `number` | `0` | Offset pixels above `scrollTo` element |
 | `download` | `boolean` | `false` | Set download behavior instead of screenshot |
 | `downloadSleep` | `number` | `1000` | Sleep in ms while waiting for download |
+| `browserArgs` | `string[]` | - | Additional browser launch args for this screenshot |
+| `headless` | `boolean` | `true` | Override headless mode for this screenshot |
+| `screenshotTimeout` | `number` | `30000` | Timeout in ms per screenshot capture |
 
 ### Screencast Options
 
@@ -156,6 +184,7 @@ Adding an `actions` array to a config entry turns it into a screencast. The outp
 | `keyup` | `key` | Release key(s) |
 | `type` | `text` | Type text |
 | `click` | `x`, `y`, `button?` | Click at coordinates |
+| `hover` | `x`, `y` or `selector`, `index?` | Move mouse to coordinates, or to the center of the `index`th element matching `selector` |
 | `drag` | `from`, `to`, `duration`, `button?` | Drag between coordinates over `duration` ms |
 | `animate` | `frames`, `eval`, `frameDelay?` | Deterministic frame-by-frame capture (see below) |
 
