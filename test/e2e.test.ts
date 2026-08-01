@@ -338,7 +338,7 @@ describe.each(availableEngines)('scrns e2e (%s)', (engineName) => {
   })
 
   describe.skipIf(!hasFfmpeg())('video output', () => {
-    it('produces an mp4 via real-time capture', { timeout: 15000 }, async () => {
+    it('produces an mp4 via real-time capture', async () => {
       await takeScreenshots({
         'video-realtime': {
           query: 'video-fixture.html',
