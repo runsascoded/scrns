@@ -1,6 +1,6 @@
 {
   "name": "scrns",
-  "version": "0.4.0-dist.34a7031",
+  "version": "0.4.0-dist.ce8e588",
   "description": "Automated screenshots with Playwright/Puppeteer - wait for selectors, configurable viewports, CLI",
   "type": "module",
   "main": "./index.cjs",
