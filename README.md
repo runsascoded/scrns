@@ -56,11 +56,14 @@ When screenshots change, the action commits and pushes to the specified branches
 | Input | Required | Default | Description |
 |---|---|---|---|
 | `host` | **yes** | — | Hostname or port for the target server |
+| `https` | no | `false` | Use HTTPS instead of HTTP |
 | `output` | no | `./screenshots` | Output directory |
 | `config` | no | auto-detect | Config file path |
 | `engine` | no | from config | `playwright` or `puppeteer` |
 | `selector` | no | from config | CSS selector to wait for |
 | `load-timeout` | no | from config | Timeout waiting for selector (ms) |
+| `screenshot-timeout` | no | from config | Timeout per screenshot capture (ms) |
+| `download-sleep` | no | from config | Sleep while waiting for downloads (ms) |
 | `browser-args` | no | — | Space-separated extra browser args |
 | `include` | no | — | Regex filter for which screenshots to generate |
 | `on-diff` | no | `fail` | `fail`, `commit`, or `none` |

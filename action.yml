@@ -4,6 +4,9 @@ inputs:
   host:
     description: 'Hostname or port for the target server'
     required: true
+  https:
+    description: 'Use HTTPS instead of HTTP'
+    default: 'false'
   output:
     description: 'Output directory'
     default: './screenshots'
@@ -15,6 +18,10 @@ inputs:
     description: 'Default CSS selector to wait for'
   load-timeout:
     description: 'Timeout waiting for selector (ms)'
+  screenshot-timeout:
+    description: 'Timeout per screenshot capture (ms)'
+  download-sleep:
+    description: 'Sleep while waiting for downloads (ms)'
   browser-args:
     description: 'Additional browser launch args (space-separated)'
   include:
@@ -122,6 +129,15 @@ runs:
         fi
         if [ -n "${{ inputs.load-timeout }}" ]; then
           ARGS+=(-l "${{ inputs.load-timeout }}")
+        fi
+        if [ -n "${{ inputs.screenshot-timeout }}" ]; then
+          ARGS+=(-T "${{ inputs.screenshot-timeout }}")
+        fi
+        if [ -n "${{ inputs.download-sleep }}" ]; then
+          ARGS+=(-d "${{ inputs.download-sleep }}")
+        fi
+        if [ "${{ inputs.https }}" = "true" ]; then
+          ARGS+=(--https)
         fi
         if [ -n "${{ inputs.include }}" ]; then
           ARGS+=(-i "${{ inputs.include }}")
