@@ -17,11 +17,12 @@ export async function createPlaywrightEngine(): Promise<ScrnsEngine> {
 function wrapBrowser(browser: any): ScrnsBrowser {
   return {
     async newPage(opts?: PageOptions) {
-      // One context per page, so headers / scale / storage state don't leak between shots
+      // One context per page, so headers / scale / storage state / color scheme don't leak between shots
       const context = await browser.newContext({
         extraHTTPHeaders: opts?.headers,
         deviceScaleFactor: opts?.scale,
         storageState: opts?.storageState,
+        colorScheme: opts?.colorScheme,
       })
       const page = await context.newPage()
       return wrapPage(page, () => context.close())

@@ -36,6 +36,7 @@ scrns [options]
 |------|-------------|
 | `-b, --browser-arg <arg>` | Additional browser launch arg (repeatable) |
 | `-c, --config <path>` | Config file path (default: `scrns.config.{ts,js,json}`) |
+| `-C, --color-scheme <scheme>` | Emulated `prefers-color-scheme`: `light` or `dark` (overrides top-level `colorScheme`; per-shot values still win) |
 | `-d, --download-sleep <ms>` | Sleep while waiting for downloads (default: 1000) |
 | `-D, --docker` | Run in Docker for reproducible output (see [Docker mode](#docker-mode)) |
 | `--docker-image <image>` | Docker image (default: auto-detect from Playwright version) |
@@ -64,6 +65,9 @@ scrns -i "home|about"
 
 # Use Puppeteer instead of Playwright
 scrns -E puppeteer
+
+# Same config, dark theme, separate output dir
+scrns -C dark -o screenshots/dark
 ```
 
 ### Preview Mode
@@ -141,7 +145,7 @@ const config: Config = {
 export default config
 ```
 
-Top-level config options (`engine`, `host`, `https`, `output`, `selector`, `loadTimeout`, `downloadSleep`, `browserArgs`, `headless`, `screenshotTimeout`, `docker`, `dockerImage`, `dockerPlatform`) are overridden by their corresponding CLI flags when both are specified. `headers`, `scale`, and `storageState` can also be set top-level (config-only; no CLI flags), as defaults for every screenshot.
+Top-level config options (`engine`, `host`, `https`, `output`, `selector`, `loadTimeout`, `downloadSleep`, `browserArgs`, `headless`, `screenshotTimeout`, `colorScheme`, `docker`, `dockerImage`, `dockerPlatform`) are overridden by their corresponding CLI flags when both are specified. `headers`, `scale`, and `storageState` can also be set top-level (config-only; no CLI flags), as defaults for every screenshot.
 
 ### Config Options
 
@@ -165,6 +169,7 @@ Top-level config options (`engine`, `host`, `https`, `output`, `selector`, `load
 | `headers` | `Record<string, string>` | - | Extra HTTP headers for every request (merged over top-level `headers`); `$NAME` / `${NAME}` expand from env |
 | `scale` | `number` | `1` | Device scale factor (e.g. `2` for retina captures) |
 | `storageState` | `string` | - | Playwright storage-state JSON (cookies + `localStorage`); Playwright only |
+| `colorScheme` | `'light' \| 'dark'` | `'light'` | Emulated `prefers-color-scheme` (overrides top-level `colorScheme` / `-C`) |
 | `crop` | `string \| { selector, padding? }` | - | Capture only the first element matching `selector` (plus `padding` CSS px, clamped to the page) |
 
 ### Auth headers, crop, scale
@@ -186,6 +191,10 @@ const config: Config = {
 - **`headers`**: `$NAME` / `${NAME}` refs are expanded from the environment at run time; an unset var is an error (raised before any browser launches). TS/JS configs can also just read `process.env`. Header values are never logged (only names). Headers go to *every* request the page makes, including third-party origins (CDNs, fonts), so only use them on pages you trust with the token.
 - **`crop`**: the element box is measured once, after load / scroll / `preScreenshotSleep`, in document coordinates (so off-screen elements work); for screencasts the same region is used for every frame. A selector that matches nothing is an error.
 - **`scale`**: output dimensions are multiplied by it (a `crop` or viewport of `W×H` at `scale: 2` yields `2W×2H` pixels).
+
+### Color scheme
+
+`colorScheme: 'dark'` (top-level, per-shot, or `-C dark`) emulates `prefers-color-scheme: dark`, so `@media (prefers-color-scheme: dark)` rules, `matchMedia` and `<picture><source media>` all see dark mode from the first paint. The default is `light` on both engines, regardless of the host OS theme. Apps whose dark mode is a URL param or `localStorage` key don't need this; set that via `query` or a `js` action instead.
 
 ### Screencast Options
 

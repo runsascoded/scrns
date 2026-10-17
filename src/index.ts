@@ -9,7 +9,7 @@ const gifenc = ('default' in gifencModule && typeof (gifencModule as any).defaul
 const { GIFEncoder, quantize, applyPalette } = gifenc
 import { PNG } from 'pngjs'
 
-export type { ScrnsEngine, ScrnsBrowser, ScrnsPage } from './engines/types.js'
+export type { ScrnsEngine, ScrnsBrowser, ScrnsPage, ColorScheme } from './engines/types.js'
 export type { EngineName } from './engines/resolve.js'
 export { resolveEngine } from './engines/resolve.js'
 
@@ -53,6 +53,8 @@ export type ScreenshotConfig = {
   scale?: number
   /** Playwright storage-state JSON path (cookies + localStorage); Playwright only */
   storageState?: string
+  /** Emulated `prefers-color-scheme` (overrides config-level `colorScheme`) */
+  colorScheme?: ColorScheme
   /** Capture only the first element matching this selector (optionally padded, clamped to the page) */
   crop?: string | CropConfig
 }
@@ -108,6 +110,7 @@ export type Config = {
   headers?: Record<string, string>
   scale?: number
   storageState?: string
+  colorScheme?: ColorScheme
   docker?: boolean
   dockerImage?: string
   dockerPlatform?: string
@@ -115,7 +118,7 @@ export type Config = {
 }
 
 /** Screenshot entry keys that distinguish a ScreenshotConfig from a nested Screens */
-const SCREENSHOT_KEYS = ['query', 'width', 'height', 'selector', 'loadTimeout', 'path', 'preScreenshotSleep', 'scrollY', 'scrollTo', 'scrollOffset', 'download', 'downloadSleep', 'actions', 'fps', 'gifQuality', 'loop', 'videoCrf', 'browserArgs', 'headless', 'screenshotTimeout', 'headers', 'scale', 'storageState', 'crop'] as const
+const SCREENSHOT_KEYS = ['query', 'width', 'height', 'selector', 'loadTimeout', 'path', 'preScreenshotSleep', 'scrollY', 'scrollTo', 'scrollOffset', 'download', 'downloadSleep', 'actions', 'fps', 'gifQuality', 'loop', 'videoCrf', 'browserArgs', 'headless', 'screenshotTimeout', 'headers', 'scale', 'storageState', 'colorScheme', 'crop'] as const
 
 function isScreens(value: unknown): value is Screens {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -138,7 +141,7 @@ export function resolveBaseUrl(host?: string | number, https?: boolean): string 
   return `${https ? 'https' : 'http'}://${h}`
 }
 
-import type { ScrnsEngine, ScrnsPage, PageOptions, Clip, ScreenshotOptions } from './engines/types.js'
+import type { ScrnsEngine, ScrnsPage, PageOptions, Clip, ScreenshotOptions, ColorScheme } from './engines/types.js'
 import type { EngineName } from './engines/resolve.js'
 import { resolveEngine } from './engines/resolve.js'
 
@@ -171,6 +174,8 @@ export type ScreenshotsOptions = {
   scale?: number
   /** Default Playwright storage-state JSON path */
   storageState?: string
+  /** Default emulated `prefers-color-scheme` */
+  colorScheme?: ColorScheme
 }
 
 const DEFAULT_WIDTH = 800
@@ -497,15 +502,26 @@ export function expandHeaders(
   ]))
 }
 
+export const COLOR_SCHEMES: readonly ColorScheme[] = ['light', 'dark']
+
+export function checkColorScheme(value: string | undefined): ColorScheme | undefined {
+  if (value === undefined) return undefined
+  if (!(COLOR_SCHEMES as readonly string[]).includes(value)) {
+    throw new Error(`Invalid colorScheme "${value}" (expected one of: ${COLOR_SCHEMES.join(', ')})`)
+  }
+  return value as ColorScheme
+}
+
 function resolvePageOptions(
   config: ScreenshotConfig,
-  options: Pick<ScreenshotsOptions, 'headers' | 'scale' | 'storageState'>,
+  options: Pick<ScreenshotsOptions, 'headers' | 'scale' | 'storageState' | 'colorScheme'>,
 ): PageOptions {
   const merged = { ...options.headers, ...config.headers }
   return {
     headers: Object.keys(merged).length ? expandHeaders(merged) : undefined,
     scale: config.scale ?? options.scale,
     storageState: config.storageState ?? options.storageState,
+    colorScheme: checkColorScheme(config.colorScheme ?? options.colorScheme),
   }
 }
 
@@ -722,6 +738,7 @@ export async function previewScreenshot(
     headers?: Record<string, string>
     scale?: number
     storageState?: string
+    colorScheme?: ColorScheme
   },
 ): Promise<PreviewResult> {
   const {

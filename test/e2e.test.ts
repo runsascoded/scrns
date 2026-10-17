@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { takeScreenshots, resolveEngine, ScreencastConfig, Screens, Config, parseConfig, resolveBaseUrl, expandHeaders, headerEnvRefs } from '../src/index.js'
-import type { ScrnsEngine, EngineName } from '../src/index.js'
+import type { ScrnsEngine, EngineName, ColorScheme } from '../src/index.js'
 import { spawn, execFileSync, execSync, ChildProcess } from 'child_process'
 import { existsSync, rmSync, mkdirSync, readFileSync, statSync } from 'fs'
 import { createServer, Server } from 'http'
@@ -465,6 +465,38 @@ describe.each(availableEngines)('scrns e2e (%s)', (engineName) => {
     expect(gifDims(resolve(testDir, 'crop-cast.gif'))).toEqual({ width: 120, height: 70 })
   })
 
+  describe('colorScheme', () => {
+    const BLUE = [0, 0, 255], BLACK = [0, 0, 0]
+    const shoot = (screens: Screens, colorScheme?: ColorScheme) => takeScreenshots(screens, {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: testDir,
+      log: () => {},
+      engine,
+      colorScheme,
+    })
+    const bg = (name: string) => pngPixel(resolve(testDir, `${name}.png`), 10, 10)
+
+    it('emulates `prefers-color-scheme`, defaulting to light', async () => {
+      const shot = { query: 'color-scheme-fixture.html', width: 100, height: 100 }
+      await shoot({
+        'cs-unset': shot,
+        'cs-light': { ...shot, colorScheme: 'light' },
+        'cs-dark': { ...shot, colorScheme: 'dark' },
+      })
+      expect(['cs-unset', 'cs-light', 'cs-dark'].map(bg)).toEqual([BLUE, BLUE, BLACK])
+    })
+
+    it('per-shot `colorScheme` overrides the global one, with a fresh page per scheme', async () => {
+      const shot = { query: 'color-scheme-fixture.html', width: 100, height: 100 }
+      await shoot({
+        'cs-g1': shot,
+        'cs-override': { ...shot, colorScheme: 'light' },
+        'cs-g2': shot,
+      }, 'dark')
+      expect(['cs-g1', 'cs-override', 'cs-g2'].map(bg)).toEqual([BLACK, BLUE, BLACK])
+    })
+  })
+
   describe('headers', () => {
     const authUrl = `http://127.0.0.1:${AUTH_PORT}`
 
@@ -629,6 +661,25 @@ describe('headers env expansion', () => {
       log: () => {},
       engine,
     })).rejects.toThrow(new Error('Header "Authorization" references unset env var $SCRNS_TEST_UNSET'))
+    expect(launches).toEqual([])
+  })
+})
+
+describe('colorScheme validation', () => {
+  it('errors on an invalid value before launching a browser', async () => {
+    const launches: string[] = []
+    const engine: ScrnsEngine = {
+      name: 'fake',
+      async launch() { launches.push('launch'); throw new Error('should not launch') },
+    }
+    await expect(takeScreenshots({
+      'a': { query: 'x', colorScheme: 'drak' as ColorScheme },
+    }, {
+      baseUrl: 'http://127.0.0.1:1',
+      outputDir: BASE_TEST_DIR,
+      log: () => {},
+      engine,
+    })).rejects.toThrow(new Error('Invalid colorScheme "drak" (expected one of: light, dark)'))
     expect(launches).toEqual([])
   })
 })

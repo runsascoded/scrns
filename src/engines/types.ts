@@ -28,6 +28,8 @@ export interface ScrnsPage {
   close(): Promise<void>
 }
 
+export type ColorScheme = 'light' | 'dark'
+
 export interface PageOptions {
   /** Extra HTTP headers sent with every request from the page */
   headers?: Record<string, string>
@@ -35,6 +37,8 @@ export interface PageOptions {
   scale?: number
   /** Path to a Playwright storage-state JSON (cookies + localStorage); Playwright only */
   storageState?: string
+  /** Emulated `prefers-color-scheme` (default: light) */
+  colorScheme?: ColorScheme
 }
 
 export interface ScrnsBrowser {

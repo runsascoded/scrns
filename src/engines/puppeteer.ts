@@ -22,6 +22,8 @@ function wrapBrowser(browser: any): ScrnsBrowser {
       }
       const page = await browser.newPage()
       if (opts?.headers) await page.setExtraHTTPHeaders(opts.headers)
+      // Always emulate (like Playwright), else headless Chrome follows the host OS theme
+      await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: opts?.colorScheme ?? 'light' }])
       const scale = opts?.scale ?? 1
       if (scale !== 1) {
         const { width, height } = page.viewport() ?? { width: 800, height: 600 }

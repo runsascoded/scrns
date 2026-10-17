@@ -20,6 +20,7 @@ export type DockerOptions = {
   screenshotTimeout?: number
   include?: string
   browserArgs?: string[]
+  colorScheme?: string
   /** Env vars to pass through to the container (by name, so values stay off the command line) */
   envVars?: string[]
   headful?: boolean
@@ -221,6 +222,7 @@ export async function runInDocker(opts: DockerOptions): Promise<void> {
   if (opts.screenshotTimeout != null) scrnsArgs.push('-T', String(opts.screenshotTimeout))
   if (opts.include) scrnsArgs.push('-i', opts.include)
   if (opts.https) scrnsArgs.push('--https')
+  if (opts.colorScheme) scrnsArgs.push('-C', opts.colorScheme)
   if (opts.browserArgs) {
     for (const arg of opts.browserArgs) {
       scrnsArgs.push('-b', arg)

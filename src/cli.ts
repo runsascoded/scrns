@@ -3,8 +3,8 @@
 import { program } from 'commander'
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
-import { takeScreenshots, previewScreenshot, resolveEngine, Screens, Config, ScreenshotConfig, parseConfig, resolveBaseUrl, headerEnvRefs } from './index.js'
-import type { EngineName } from './index.js'
+import { takeScreenshots, previewScreenshot, resolveEngine, Screens, Config, ScreenshotConfig, parseConfig, resolveBaseUrl, headerEnvRefs, checkColorScheme } from './index.js'
+import type { EngineName, ColorScheme } from './index.js'
 import { runInDocker } from './docker.js'
 
 const DEFAULT_CONFIGS = [
@@ -51,6 +51,7 @@ type ResolvedConfig = {
   headers?: Record<string, string>
   scale?: number
   storageState?: string
+  colorScheme?: ColorScheme
   docker?: boolean
   dockerImage?: string
   dockerPlatform?: string
@@ -67,6 +68,7 @@ async function loadResolvedConfig(opts: {
   downloadSleep?: number
   screenshotTimeout?: number
   browserArg?: string[]
+  colorScheme?: string
   headful?: boolean
   docker?: boolean
   dockerImage?: string
@@ -107,6 +109,7 @@ async function loadResolvedConfig(opts: {
     headers: configOptions.headers,
     scale: configOptions.scale,
     storageState: configOptions.storageState,
+    colorScheme: checkColorScheme(opts.colorScheme ?? configOptions.colorScheme),
     docker: opts.docker ?? configOptions.docker,
     dockerImage: opts.dockerImage ?? configOptions.dockerImage,
     dockerPlatform: opts.dockerPlatform ?? configOptions.dockerPlatform,
@@ -117,6 +120,7 @@ async function loadResolvedConfig(opts: {
 function addSharedOptions(cmd: typeof program) {
   return cmd
     .option('-c, --config <path>', 'Path to config file (default: scrns.config.{ts,js,json})')
+    .option('-C, --color-scheme <scheme>', 'Emulated prefers-color-scheme: light or dark (overrides config-level colorScheme)')
     .option('-b, --browser-arg <arg>', 'Additional browser launch arg (repeatable)', (val: string, prev: string[]) => [...prev, val], [] as string[])
     .option('-E, --engine <name>', 'Browser engine: puppeteer or playwright (default: auto-detect)')
     .option('-h, --host <host>', 'Hostname or port (numeric port maps to 127.0.0.1:port)')
@@ -154,6 +158,7 @@ addSharedOptions(program)
         screenshotTimeout: resolved.defaultScreenshotTimeout,
         include: opts.include,
         browserArgs: resolved.browserArgs.length ? resolved.browserArgs : undefined,
+        colorScheme: opts.colorScheme,
         envVars: [...new Set([
           ...headerEnvRefs(resolved.headers),
           ...Object.values(resolved.screens).flatMap(s => headerEnvRefs(s.headers)),
@@ -181,6 +186,7 @@ addSharedOptions(program)
       headers: resolved.headers,
       scale: resolved.scale,
       storageState: resolved.storageState,
+      colorScheme: resolved.colorScheme,
     })
   })
 
@@ -201,7 +207,7 @@ addSharedOptions(previewCmd)
     let defaultLoadTimeout: number | undefined
     let engineName: EngineName | undefined
     let browserArgs: string[] = []
-    let pageOpts: Pick<ResolvedConfig, 'headers' | 'scale' | 'storageState'> = {}
+    let pageOpts: Pick<ResolvedConfig, 'headers' | 'scale' | 'storageState' | 'colorScheme'> = {}
 
     if (cmdOpts.url) {
       // --url mode: no config file needed
@@ -215,6 +221,7 @@ addSharedOptions(previewCmd)
       defaultLoadTimeout = cmdOpts.loadTimeout
       engineName = cmdOpts.engine as EngineName | undefined
       browserArgs = cmdOpts.browserArg ?? []
+      pageOpts = { colorScheme: checkColorScheme(cmdOpts.colorScheme) }
     } else {
       // Config-based mode
       const resolved = await loadResolvedConfig(cmdOpts)
@@ -224,7 +231,7 @@ addSharedOptions(previewCmd)
       defaultLoadTimeout = resolved.defaultLoadTimeout
       engineName = resolved.engine
       browserArgs = resolved.browserArgs
-      pageOpts = { headers: resolved.headers, scale: resolved.scale, storageState: resolved.storageState }
+      pageOpts = { headers: resolved.headers, scale: resolved.scale, storageState: resolved.storageState, colorScheme: resolved.colorScheme }
 
       if (name) {
         config = resolved.screens[name]
