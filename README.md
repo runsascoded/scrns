@@ -40,7 +40,7 @@ scrns [options]
 | `-D, --docker` | Run in Docker for reproducible output (see [Docker mode](#docker-mode)) |
 | `--docker-image <image>` | Docker image (default: auto-detect from Playwright version) |
 | `--docker-platform <platform>` | Docker platform (default: `linux/amd64`) |
-| `--docker-scrns <ver>` | scrns version for Docker (npm version, SHA, `gh:<sha>`, `gl:<sha>`) |
+| `--docker-scrns <ver>` | scrns version for Docker (npm version, or source SHA / `gh:<sha>` / `gl:<sha>`, resolved to its `dist` build) |
 | `-E, --engine <name>` | Browser engine: `playwright` or `puppeteer` (default: auto-detect, prefers Playwright) |
 | `-h, --host <host>` | Hostname or port (numeric port maps to `127.0.0.1:port`) |
 | `-H, --headful` | Run browser in headful mode (override config `headless`) |
@@ -95,7 +95,7 @@ scrns -D
 ```
 
 - The image defaults to `mcr.microsoft.com/playwright:v<version>-noble`, matching the installed Playwright version; override with `--docker-image`.
-- When run from a scrns checkout (local dev), the local build is packed and mounted; otherwise the installed version is reused. Pin explicitly with `--docker-scrns <ver>` (npm version, bare SHA, or `gh:<sha>` / `gl:<sha>`).
+- When run from a scrns checkout (local dev), the local build is packed and mounted; otherwise the installed version is reused. Pin explicitly with `--docker-scrns <ver>`: an npm version, or a source SHA (bare = GitHub, or `gh:<sha>` / `gl:<sha>`), which is resolved to the `dist`-branch commit CI built from it (source commits aren't installable: `dist/` is untracked).
 - `docker`, `dockerImage`, and `dockerPlatform` can also be set in the config file.
 - Env vars referenced by [`headers`](#auth-headers-crop-scale) (`$NAME`) are passed into the container by name (`docker run -e NAME`), so their values stay off the command line. `storageState` files aren't mounted.
 

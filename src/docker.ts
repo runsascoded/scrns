@@ -80,22 +80,75 @@ function packLocal(): string {
 
 const SHA_RE = /^[0-9a-f]{7,40}$/i
 
+export type DistHost = 'github' | 'gitlab'
+
+const REPOS: Record<DistHost, string> = {
+  github: 'runsascoded/scrns',
+  gitlab: 'runsascoded/js/scrns',
+}
+
+type Fetch = (url: string) => Promise<{ ok: boolean, status: number, json(): Promise<any> }>
+
+/** Pages of `dist`-branch commits, as `[sha, message]` */
+async function distCommitsPage(host: DistHost, page: number, fetchFn: Fetch): Promise<[string, string][]> {
+  const repo = REPOS[host]
+  const url = host === 'github'
+    ? `https://api.github.com/repos/${repo}/commits?sha=dist&per_page=100&page=${page}`
+    : `https://gitlab.com/api/v4/projects/${encodeURIComponent(repo)}/repository/commits?ref_name=dist&per_page=100&page=${page}`
+  const res = await fetchFn(url)
+  if (!res.ok) throw new Error(`Listing ${host} dist commits failed: HTTP ${res.status} (${url})`)
+  const commits: any[] = await res.json()
+  return host === 'github'
+    ? commits.map(c => [c.sha, c.commit.message])
+    : commits.map(c => [c.id, c.message])
+}
+
+const MAX_DIST_PAGES = 5
+
+/**
+ * Find the `dist`-branch commit (built by npm-dist; message `Built from <source sha>`) for a source SHA
+ * (prefix). A SHA that is itself a dist commit resolves to itself. Source commits aren't installable:
+ * `dist/` is untracked and there's no `prepare` script.
+ */
+export async function resolveDistSha(
+  host: DistHost,
+  sha: string,
+  fetchFn: Fetch = fetch,
+): Promise<string> {
+  const prefix = sha.toLowerCase()
+  for (let page = 1; page <= MAX_DIST_PAGES; page++) {
+    const commits = await distCommitsPage(host, page, fetchFn)
+    if (!commits.length) break
+    for (const [id, message] of commits) {
+      const builtFrom = message.match(/^Built from ([0-9a-f]{40})$/m)?.[1]
+      if (!builtFrom) continue // a source commit (dist history includes them)
+      if (builtFrom.startsWith(prefix) || id.startsWith(prefix)) return id
+    }
+  }
+  throw new Error(`No ${host} dist build found for ${sha} (pushed to main, and CI finished?)`)
+}
+
 /**
  * Resolve a version shorthand to a full npm install specifier.
  *
  * - `0.3.0`           → `scrns@0.3.0`     (npm)
- * - `gh:abc1234`      → `github:runsascoded/scrns#abc1234`
- * - `gl:abc1234`      → `gitlab:runsascoded/js/scrns#abc1234`
- * - `abc1234` (hex)   → `github:runsascoded/scrns#abc1234`
+ * - `gh:abc1234`      → `github:runsascoded/scrns#<dist sha>`   (dist build of source `abc1234`)
+ * - `gl:abc1234`      → `gitlab:runsascoded/js/scrns#<dist sha>`
+ * - `abc1234` (hex)   → same as `gh:abc1234`
  * - `github:...#sha`  → passed through as-is
  * - `gitlab:...#sha`  → passed through as-is
  */
-function resolveVersionSpec(version: string): string {
+export async function resolveVersionSpec(version: string, fetchFn: Fetch = fetch): Promise<string> {
   if (version.startsWith('github:') || version.startsWith('gitlab:')) return version
-  if (version.startsWith('gh:')) return `github:runsascoded/scrns#${version.slice(3)}`
-  if (version.startsWith('gl:')) return `gitlab:runsascoded/js/scrns#${version.slice(3)}`
-  if (SHA_RE.test(version)) return `github:runsascoded/scrns#${version}`
-  return `scrns@${version}`
+  let host: DistHost | undefined
+  let sha = version
+  if (version.startsWith('gh:')) { host = 'github'; sha = version.slice(3) }
+  else if (version.startsWith('gl:')) { host = 'gitlab'; sha = version.slice(3) }
+  else if (SHA_RE.test(version)) host = 'github'
+  if (!host) return `scrns@${version}`
+  const dist = await resolveDistSha(host, sha, fetchFn)
+  console.error(`Resolved ${version} → ${host} dist commit ${dist.slice(0, 7)}`)
+  return `${host}:${REPOS[host]}#${dist}`
 }
 
 function rewriteHostForDocker(host: string | number): string {
@@ -117,7 +170,7 @@ export async function runInDocker(opts: DockerOptions): Promise<void> {
 
   if (opts.version) {
     // Explicit version: resolve shorthand and install
-    const spec = resolveVersionSpec(opts.version)
+    const spec = await resolveVersionSpec(opts.version)
     installCmd = `npm install -g '${spec}'`
   } else if (isLocalDev()) {
     // Running from local checkout: pack and mount tarball

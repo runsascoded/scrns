@@ -136,7 +136,7 @@ addSharedOptions(program)
   .option('-D, --docker', 'Run in Docker for reproducible output')
   .option('--docker-image <image>', 'Docker image (default: auto-detect from Playwright version)')
   .option('--docker-platform <platform>', 'Docker platform (default: linux/amd64)')
-  .option('--docker-scrns <ver>', 'scrns version for Docker (npm version, SHA, gh:<sha>, gl:<sha>)')
+  .option('--docker-scrns <ver>', 'scrns version for Docker (npm version, or source SHA / gh:<sha> / gl:<sha>, resolved to its dist build)')
   .option('-i, --include <regex>', 'Only generate screenshots matching this regex')
   .action(async (opts) => {
     const resolved = await loadResolvedConfig(opts)
