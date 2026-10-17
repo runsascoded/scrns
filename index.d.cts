@@ -41,6 +41,7 @@ interface ScrnsPage {
     setDownloadPath(dir: string): Promise<void>;
     close(): Promise<void>;
 }
+type ColorScheme = 'light' | 'dark';
 interface PageOptions {
     /** Extra HTTP headers sent with every request from the page */
     headers?: Record<string, string>;
@@ -48,6 +49,8 @@ interface PageOptions {
     scale?: number;
     /** Path to a Playwright storage-state JSON (cookies + localStorage); Playwright only */
     storageState?: string;
+    /** Emulated `prefers-color-scheme` (default: light) */
+    colorScheme?: ColorScheme;
 }
 interface ScrnsBrowser {
     newPage(opts?: PageOptions): Promise<ScrnsPage>;
@@ -104,6 +107,8 @@ type ScreenshotConfig = {
     scale?: number;
     /** Playwright storage-state JSON path (cookies + localStorage); Playwright only */
     storageState?: string;
+    /** Emulated `prefers-color-scheme` (overrides config-level `colorScheme`) */
+    colorScheme?: ColorScheme;
     /** Capture only the first element matching this selector (optionally padded, clamped to the page) */
     crop?: string | CropConfig;
 };
@@ -181,6 +186,7 @@ type Config = {
     headers?: Record<string, string>;
     scale?: number;
     storageState?: string;
+    colorScheme?: ColorScheme;
     docker?: boolean;
     dockerImage?: string;
     dockerPlatform?: string;
@@ -221,11 +227,15 @@ type ScreenshotsOptions = {
     scale?: number;
     /** Default Playwright storage-state JSON path */
     storageState?: string;
+    /** Default emulated `prefers-color-scheme` */
+    colorScheme?: ColorScheme;
 };
 /** Names of env vars referenced (as `$NAME` / `${NAME}`) by header values */
 declare function headerEnvRefs(headers?: Record<string, string>): string[];
 /** Expand `$NAME` / `${NAME}` env refs in header values; throws on unset vars (never echoes values) */
 declare function expandHeaders(headers: Record<string, string>, env?: Record<string, string | undefined>): Record<string, string>;
+declare const COLOR_SCHEMES: readonly ColorScheme[];
+declare function checkColorScheme(value: string | undefined): ColorScheme | undefined;
 declare function takeScreenshots(screens: Screens, options: ScreenshotsOptions): Promise<void>;
 type PreviewResult = {
     url: string;
@@ -244,6 +254,7 @@ declare function previewScreenshot(config: ScreenshotConfig, options: {
     headers?: Record<string, string>;
     scale?: number;
     storageState?: string;
+    colorScheme?: ColorScheme;
 }): Promise<PreviewResult>;
 
-export { type Config, type CropConfig, type EngineName, type PreviewResult, type ScreencastAction, type ScreencastConfig, type Screens, type ScreenshotConfig, type ScreenshotsOptions, type ScrnsBrowser, type ScrnsEngine, type ScrnsPage, expandHeaders, headerEnvRefs, isScreencast, parseConfig, previewScreenshot, resolveBaseUrl, resolveEngine, takeScreenshots };
+export { COLOR_SCHEMES, type ColorScheme, type Config, type CropConfig, type EngineName, type PreviewResult, type ScreencastAction, type ScreencastConfig, type Screens, type ScreenshotConfig, type ScreenshotsOptions, type ScrnsBrowser, type ScrnsEngine, type ScrnsPage, checkColorScheme, expandHeaders, headerEnvRefs, isScreencast, parseConfig, previewScreenshot, resolveBaseUrl, resolveEngine, takeScreenshots };

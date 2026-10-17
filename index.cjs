@@ -30,6 +30,8 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
+  COLOR_SCHEMES: () => COLOR_SCHEMES,
+  checkColorScheme: () => checkColorScheme,
   expandHeaders: () => expandHeaders,
   headerEnvRefs: () => headerEnvRefs,
   isScreencast: () => isScreencast,
@@ -68,6 +70,7 @@ function wrapBrowser(browser) {
       }
       const page = await browser.newPage();
       if (opts?.headers) await page.setExtraHTTPHeaders(opts.headers);
+      await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: opts?.colorScheme ?? "light" }]);
       const scale = opts?.scale ?? 1;
       if (scale !== 1) {
         const { width, height } = page.viewport() ?? { width: 800, height: 600 };
@@ -164,7 +167,8 @@ function wrapBrowser2(browser) {
       const context = await browser.newContext({
         extraHTTPHeaders: opts?.headers,
         deviceScaleFactor: opts?.scale,
-        storageState: opts?.storageState
+        storageState: opts?.storageState,
+        colorScheme: opts?.colorScheme
       });
       const page = await context.newPage();
       return wrapPage2(page, () => context.close());
@@ -254,7 +258,7 @@ var { GIFEncoder, quantize, applyPalette } = gifenc;
 function isScreencast(config) {
   return "actions" in config && Array.isArray(config.actions);
 }
-var SCREENSHOT_KEYS = ["query", "width", "height", "selector", "loadTimeout", "path", "preScreenshotSleep", "scrollY", "scrollTo", "scrollOffset", "download", "downloadSleep", "actions", "fps", "gifQuality", "loop", "videoCrf", "browserArgs", "headless", "screenshotTimeout", "headers", "scale", "storageState", "crop"];
+var SCREENSHOT_KEYS = ["query", "width", "height", "selector", "loadTimeout", "path", "preScreenshotSleep", "scrollY", "scrollTo", "scrollOffset", "download", "downloadSleep", "actions", "fps", "gifQuality", "loop", "videoCrf", "browserArgs", "headless", "screenshotTimeout", "headers", "scale", "storageState", "colorScheme", "crop"];
 function isScreens(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) && !SCREENSHOT_KEYS.some((k) => k in value);
 }
@@ -535,12 +539,21 @@ function expandHeaders(headers, env = process.env) {
     })
   ]));
 }
+var COLOR_SCHEMES = ["light", "dark"];
+function checkColorScheme(value) {
+  if (value === void 0) return void 0;
+  if (!COLOR_SCHEMES.includes(value)) {
+    throw new Error(`Invalid colorScheme "${value}" (expected one of: ${COLOR_SCHEMES.join(", ")})`);
+  }
+  return value;
+}
 function resolvePageOptions(config, options) {
   const merged = { ...options.headers, ...config.headers };
   return {
     headers: Object.keys(merged).length ? expandHeaders(merged) : void 0,
     scale: config.scale ?? options.scale,
-    storageState: config.storageState ?? options.storageState
+    storageState: config.storageState ?? options.storageState,
+    colorScheme: checkColorScheme(config.colorScheme ?? options.colorScheme)
   };
 }
 async function computeClip(page, crop) {
@@ -773,6 +786,8 @@ async function previewScreenshot(config, options) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  COLOR_SCHEMES,
+  checkColorScheme,
   expandHeaders,
   headerEnvRefs,
   isScreencast,

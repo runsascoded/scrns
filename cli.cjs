@@ -57,6 +57,7 @@ function wrapBrowser(browser) {
       }
       const page = await browser.newPage();
       if (opts?.headers) await page.setExtraHTTPHeaders(opts.headers);
+      await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: opts?.colorScheme ?? "light" }]);
       const scale = opts?.scale ?? 1;
       if (scale !== 1) {
         const { width, height } = page.viewport() ?? { width: 800, height: 600 };
@@ -153,7 +154,8 @@ function wrapBrowser2(browser) {
       const context = await browser.newContext({
         extraHTTPHeaders: opts?.headers,
         deviceScaleFactor: opts?.scale,
-        storageState: opts?.storageState
+        storageState: opts?.storageState,
+        colorScheme: opts?.colorScheme
       });
       const page = await context.newPage();
       return wrapPage2(page, () => context.close());
@@ -243,7 +245,7 @@ var { GIFEncoder, quantize, applyPalette } = gifenc;
 function isScreencast(config) {
   return "actions" in config && Array.isArray(config.actions);
 }
-var SCREENSHOT_KEYS = ["query", "width", "height", "selector", "loadTimeout", "path", "preScreenshotSleep", "scrollY", "scrollTo", "scrollOffset", "download", "downloadSleep", "actions", "fps", "gifQuality", "loop", "videoCrf", "browserArgs", "headless", "screenshotTimeout", "headers", "scale", "storageState", "crop"];
+var SCREENSHOT_KEYS = ["query", "width", "height", "selector", "loadTimeout", "path", "preScreenshotSleep", "scrollY", "scrollTo", "scrollOffset", "download", "downloadSleep", "actions", "fps", "gifQuality", "loop", "videoCrf", "browserArgs", "headless", "screenshotTimeout", "headers", "scale", "storageState", "colorScheme", "crop"];
 function isScreens(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) && !SCREENSHOT_KEYS.some((k) => k in value);
 }
@@ -524,12 +526,21 @@ function expandHeaders(headers, env = process.env) {
     })
   ]));
 }
+var COLOR_SCHEMES = ["light", "dark"];
+function checkColorScheme(value) {
+  if (value === void 0) return void 0;
+  if (!COLOR_SCHEMES.includes(value)) {
+    throw new Error(`Invalid colorScheme "${value}" (expected one of: ${COLOR_SCHEMES.join(", ")})`);
+  }
+  return value;
+}
 function resolvePageOptions(config, options) {
   const merged = { ...options.headers, ...config.headers };
   return {
     headers: Object.keys(merged).length ? expandHeaders(merged) : void 0,
     scale: config.scale ?? options.scale,
-    storageState: config.storageState ?? options.storageState
+    storageState: config.storageState ?? options.storageState,
+    colorScheme: checkColorScheme(config.colorScheme ?? options.colorScheme)
   };
 }
 async function computeClip(page, crop) {
@@ -906,6 +917,7 @@ async function runInDocker(opts) {
   if (opts.screenshotTimeout != null) scrnsArgs.push("-T", String(opts.screenshotTimeout));
   if (opts.include) scrnsArgs.push("-i", opts.include);
   if (opts.https) scrnsArgs.push("--https");
+  if (opts.colorScheme) scrnsArgs.push("-C", opts.colorScheme);
   if (opts.browserArgs) {
     for (const arg of opts.browserArgs) {
       scrnsArgs.push("-b", arg);
@@ -984,13 +996,14 @@ async function loadResolvedConfig(opts) {
     headers: configOptions.headers,
     scale: configOptions.scale,
     storageState: configOptions.storageState,
+    colorScheme: checkColorScheme(opts.colorScheme ?? configOptions.colorScheme),
     docker: opts.docker ?? configOptions.docker,
     dockerImage: opts.dockerImage ?? configOptions.dockerImage,
     dockerPlatform: opts.dockerPlatform ?? configOptions.dockerPlatform
   };
 }
 function addSharedOptions(cmd) {
-  return cmd.option("-c, --config <path>", "Path to config file (default: scrns.config.{ts,js,json})").option("-b, --browser-arg <arg>", "Additional browser launch arg (repeatable)", (val, prev) => [...prev, val], []).option("-E, --engine <name>", "Browser engine: puppeteer or playwright (default: auto-detect)").option("-h, --host <host>", "Hostname or port (numeric port maps to 127.0.0.1:port)").option("-H, --headful", "Run browser in headful mode (override config headless)").option("-l, --load-timeout <ms>", "Timeout waiting for selector (default: 30000)", parseInt).option("-o, --output <dir>", "Output directory (default: ./screenshots)").option("-s, --selector <css>", "Default CSS selector to wait for").option("-T, --screenshot-timeout <ms>", "Timeout per screenshot capture (default: 30000)", parseInt).option("--https", "Use HTTPS instead of HTTP");
+  return cmd.option("-c, --config <path>", "Path to config file (default: scrns.config.{ts,js,json})").option("-C, --color-scheme <scheme>", "Emulated prefers-color-scheme: light or dark (overrides config-level colorScheme)").option("-b, --browser-arg <arg>", "Additional browser launch arg (repeatable)", (val, prev) => [...prev, val], []).option("-E, --engine <name>", "Browser engine: puppeteer or playwright (default: auto-detect)").option("-h, --host <host>", "Hostname or port (numeric port maps to 127.0.0.1:port)").option("-H, --headful", "Run browser in headful mode (override config headless)").option("-l, --load-timeout <ms>", "Timeout waiting for selector (default: 30000)", parseInt).option("-o, --output <dir>", "Output directory (default: ./screenshots)").option("-s, --selector <css>", "Default CSS selector to wait for").option("-T, --screenshot-timeout <ms>", "Timeout per screenshot capture (default: 30000)", parseInt).option("--https", "Use HTTPS instead of HTTP");
 }
 addSharedOptions(import_commander.program).name("scrns").description("Take automated screenshots with Playwright/Puppeteer").option("-d, --download-sleep <ms>", "Sleep while waiting for downloads (default: 1000)", parseInt).option("-D, --docker", "Run in Docker for reproducible output").option("--docker-image <image>", "Docker image (default: auto-detect from Playwright version)").option("--docker-platform <platform>", "Docker platform (default: linux/amd64)").option("--docker-scrns <ver>", "scrns version for Docker (npm version, or source SHA / gh:<sha> / gl:<sha>, resolved to its dist build)").option("-i, --include <regex>", "Only generate screenshots matching this regex").action(async (opts) => {
   const resolved = await loadResolvedConfig(opts);
@@ -1007,6 +1020,7 @@ addSharedOptions(import_commander.program).name("scrns").description("Take autom
       screenshotTimeout: resolved.defaultScreenshotTimeout,
       include: opts.include,
       browserArgs: resolved.browserArgs.length ? resolved.browserArgs : void 0,
+      colorScheme: opts.colorScheme,
       envVars: [.../* @__PURE__ */ new Set([
         ...headerEnvRefs(resolved.headers),
         ...Object.values(resolved.screens).flatMap((s) => headerEnvRefs(s.headers))
@@ -1032,7 +1046,8 @@ addSharedOptions(import_commander.program).name("scrns").description("Take autom
     headless: resolved.headless,
     headers: resolved.headers,
     scale: resolved.scale,
-    storageState: resolved.storageState
+    storageState: resolved.storageState,
+    colorScheme: resolved.colorScheme
   });
 });
 var previewCmd = import_commander.program.command("preview [name]").alias("record").description("Open headful browser for interactive screenshot composition").option("--url <url>", "URL to open (overrides config entry)");
@@ -1057,6 +1072,7 @@ addSharedOptions(previewCmd).action(async (name, cmdOpts) => {
     defaultLoadTimeout = cmdOpts.loadTimeout;
     engineName = cmdOpts.engine;
     browserArgs = cmdOpts.browserArg ?? [];
+    pageOpts = { colorScheme: checkColorScheme(cmdOpts.colorScheme) };
   } else {
     const resolved = await loadResolvedConfig(cmdOpts);
     baseUrl = resolved.baseUrl;
@@ -1065,7 +1081,7 @@ addSharedOptions(previewCmd).action(async (name, cmdOpts) => {
     defaultLoadTimeout = resolved.defaultLoadTimeout;
     engineName = resolved.engine;
     browserArgs = resolved.browserArgs;
-    pageOpts = { headers: resolved.headers, scale: resolved.scale, storageState: resolved.storageState };
+    pageOpts = { headers: resolved.headers, scale: resolved.scale, storageState: resolved.storageState, colorScheme: resolved.colorScheme };
     if (name) {
       config = resolved.screens[name];
       if (!config) {
