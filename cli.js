@@ -781,12 +781,47 @@ function packLocal() {
   return tarball;
 }
 var SHA_RE = /^[0-9a-f]{7,40}$/i;
-function resolveVersionSpec(version) {
+var REPOS = {
+  github: "runsascoded/scrns",
+  gitlab: "runsascoded/js/scrns"
+};
+async function distCommitsPage(host, page, fetchFn) {
+  const repo = REPOS[host];
+  const url = host === "github" ? `https://api.github.com/repos/${repo}/commits?sha=dist&per_page=100&page=${page}` : `https://gitlab.com/api/v4/projects/${encodeURIComponent(repo)}/repository/commits?ref_name=dist&per_page=100&page=${page}`;
+  const res = await fetchFn(url);
+  if (!res.ok) throw new Error(`Listing ${host} dist commits failed: HTTP ${res.status} (${url})`);
+  const commits = await res.json();
+  return host === "github" ? commits.map((c) => [c.sha, c.commit.message]) : commits.map((c) => [c.id, c.message]);
+}
+var MAX_DIST_PAGES = 5;
+async function resolveDistSha(host, sha, fetchFn = fetch) {
+  const prefix = sha.toLowerCase();
+  for (let page = 1; page <= MAX_DIST_PAGES; page++) {
+    const commits = await distCommitsPage(host, page, fetchFn);
+    if (!commits.length) break;
+    for (const [id, message] of commits) {
+      const builtFrom = message.match(/^Built from ([0-9a-f]{40})$/m)?.[1];
+      if (!builtFrom) continue;
+      if (builtFrom.startsWith(prefix) || id.startsWith(prefix)) return id;
+    }
+  }
+  throw new Error(`No ${host} dist build found for ${sha} (pushed to main, and CI finished?)`);
+}
+async function resolveVersionSpec(version, fetchFn = fetch) {
   if (version.startsWith("github:") || version.startsWith("gitlab:")) return version;
-  if (version.startsWith("gh:")) return `github:runsascoded/scrns#${version.slice(3)}`;
-  if (version.startsWith("gl:")) return `gitlab:runsascoded/js/scrns#${version.slice(3)}`;
-  if (SHA_RE.test(version)) return `github:runsascoded/scrns#${version}`;
-  return `scrns@${version}`;
+  let host;
+  let sha = version;
+  if (version.startsWith("gh:")) {
+    host = "github";
+    sha = version.slice(3);
+  } else if (version.startsWith("gl:")) {
+    host = "gitlab";
+    sha = version.slice(3);
+  } else if (SHA_RE.test(version)) host = "github";
+  if (!host) return `scrns@${version}`;
+  const dist = await resolveDistSha(host, sha, fetchFn);
+  console.error(`Resolved ${version} \u2192 ${host} dist commit ${dist.slice(0, 7)}`);
+  return `${host}:${REPOS[host]}#${dist}`;
 }
 function rewriteHostForDocker(host) {
   let h = String(host);
@@ -802,7 +837,7 @@ async function runInDocker(opts) {
   let installCmd;
   const extraMounts = [];
   if (opts.version) {
-    const spec = resolveVersionSpec(opts.version);
+    const spec = await resolveVersionSpec(opts.version);
     installCmd = `npm install -g '${spec}'`;
   } else if (isLocalDev()) {
     const tarball = packLocal();
@@ -933,7 +968,7 @@ async function loadResolvedConfig(opts) {
 function addSharedOptions(cmd) {
   return cmd.option("-c, --config <path>", "Path to config file (default: scrns.config.{ts,js,json})").option("-b, --browser-arg <arg>", "Additional browser launch arg (repeatable)", (val, prev) => [...prev, val], []).option("-E, --engine <name>", "Browser engine: puppeteer or playwright (default: auto-detect)").option("-h, --host <host>", "Hostname or port (numeric port maps to 127.0.0.1:port)").option("-H, --headful", "Run browser in headful mode (override config headless)").option("-l, --load-timeout <ms>", "Timeout waiting for selector (default: 30000)", parseInt).option("-o, --output <dir>", "Output directory (default: ./screenshots)").option("-s, --selector <css>", "Default CSS selector to wait for").option("-T, --screenshot-timeout <ms>", "Timeout per screenshot capture (default: 30000)", parseInt).option("--https", "Use HTTPS instead of HTTP");
 }
-addSharedOptions(program).name("scrns").description("Take automated screenshots with Playwright/Puppeteer").option("-d, --download-sleep <ms>", "Sleep while waiting for downloads (default: 1000)", parseInt).option("-D, --docker", "Run in Docker for reproducible output").option("--docker-image <image>", "Docker image (default: auto-detect from Playwright version)").option("--docker-platform <platform>", "Docker platform (default: linux/amd64)").option("--docker-scrns <ver>", "scrns version for Docker (npm version, SHA, gh:<sha>, gl:<sha>)").option("-i, --include <regex>", "Only generate screenshots matching this regex").action(async (opts) => {
+addSharedOptions(program).name("scrns").description("Take automated screenshots with Playwright/Puppeteer").option("-d, --download-sleep <ms>", "Sleep while waiting for downloads (default: 1000)", parseInt).option("-D, --docker", "Run in Docker for reproducible output").option("--docker-image <image>", "Docker image (default: auto-detect from Playwright version)").option("--docker-platform <platform>", "Docker platform (default: linux/amd64)").option("--docker-scrns <ver>", "scrns version for Docker (npm version, or source SHA / gh:<sha> / gl:<sha>, resolved to its dist build)").option("-i, --include <regex>", "Only generate screenshots matching this regex").action(async (opts) => {
   const resolved = await loadResolvedConfig(opts);
   if (resolved.docker) {
     await runInDocker({
