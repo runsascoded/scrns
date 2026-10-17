@@ -1,3 +1,15 @@
+type Clip = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+};
+interface ScreenshotOptions {
+    path?: string;
+    timeout?: number;
+    /** Region to capture, in document (not viewport) CSS-pixel coordinates */
+    clip?: Clip;
+}
 interface ScrnsPage {
     goto(url: string): Promise<void>;
     setViewportSize(size: {
@@ -7,10 +19,7 @@ interface ScrnsPage {
     waitForSelector(selector: string, opts?: {
         timeout?: number;
     }): Promise<void>;
-    screenshot(opts?: {
-        path?: string;
-        timeout?: number;
-    }): Promise<Buffer>;
+    screenshot(opts?: ScreenshotOptions): Promise<Buffer>;
     evaluate<R>(pageFunction: string | ((...args: any[]) => R), arg?: any): Promise<R>;
     keyboard: {
         down(key: string): Promise<void>;
@@ -30,9 +39,18 @@ interface ScrnsPage {
         }): Promise<void>;
     };
     setDownloadPath(dir: string): Promise<void>;
+    close(): Promise<void>;
+}
+interface PageOptions {
+    /** Extra HTTP headers sent with every request from the page */
+    headers?: Record<string, string>;
+    /** Device scale factor (default: 1) */
+    scale?: number;
+    /** Path to a Playwright storage-state JSON (cookies + localStorage); Playwright only */
+    storageState?: string;
 }
 interface ScrnsBrowser {
-    newPage(): Promise<ScrnsPage>;
+    newPage(opts?: PageOptions): Promise<ScrnsPage>;
     close(): Promise<void>;
 }
 interface ScrnsEngine {
@@ -77,6 +95,22 @@ type ScreenshotConfig = {
     headless?: boolean;
     /** Timeout in ms for page.screenshot() calls (default: 30000) */
     screenshotTimeout?: number;
+    /**
+     * Extra HTTP headers for every request from the page (merged over config-level `headers`).
+     * Values may reference env vars as `$NAME` / `${NAME}`; an unset var is an error.
+     */
+    headers?: Record<string, string>;
+    /** Device scale factor, e.g. 2 for retina captures (default: 1) */
+    scale?: number;
+    /** Playwright storage-state JSON path (cookies + localStorage); Playwright only */
+    storageState?: string;
+    /** Capture only the first element matching this selector (optionally padded, clamped to the page) */
+    crop?: string | CropConfig;
+};
+type CropConfig = {
+    selector: string;
+    /** CSS pixels of padding around the element's box (default: 0) */
+    padding?: number;
 };
 type ScreencastAction = {
     type: 'wait';
@@ -144,6 +178,9 @@ type Config = {
     browserArgs?: string[];
     headless?: boolean;
     screenshotTimeout?: number;
+    headers?: Record<string, string>;
+    scale?: number;
+    storageState?: string;
     docker?: boolean;
     dockerImage?: string;
     dockerPlatform?: string;
@@ -178,7 +215,17 @@ type ScreenshotsOptions = {
     headless?: boolean;
     /** Default screenshot timeout in ms (default: 30000) */
     defaultScreenshotTimeout?: number;
+    /** Extra HTTP headers for every request (per-screenshot `headers` merge over these) */
+    headers?: Record<string, string>;
+    /** Default device scale factor (default: 1) */
+    scale?: number;
+    /** Default Playwright storage-state JSON path */
+    storageState?: string;
 };
+/** Names of env vars referenced (as `$NAME` / `${NAME}`) by header values */
+declare function headerEnvRefs(headers?: Record<string, string>): string[];
+/** Expand `$NAME` / `${NAME}` env refs in header values; throws on unset vars (never echoes values) */
+declare function expandHeaders(headers: Record<string, string>, env?: Record<string, string | undefined>): Record<string, string>;
 declare function takeScreenshots(screens: Screens, options: ScreenshotsOptions): Promise<void>;
 type PreviewResult = {
     url: string;
@@ -194,6 +241,9 @@ declare function previewScreenshot(config: ScreenshotConfig, options: {
     log?: (message: string) => void;
     engine?: ScrnsEngine;
     browserArgs?: string[];
+    headers?: Record<string, string>;
+    scale?: number;
+    storageState?: string;
 }): Promise<PreviewResult>;
 
-export { type Config, type EngineName, type PreviewResult, type ScreencastAction, type ScreencastConfig, type Screens, type ScreenshotConfig, type ScreenshotsOptions, type ScrnsBrowser, type ScrnsEngine, type ScrnsPage, isScreencast, parseConfig, previewScreenshot, resolveBaseUrl, resolveEngine, takeScreenshots };
+export { type Config, type CropConfig, type EngineName, type PreviewResult, type ScreencastAction, type ScreencastConfig, type Screens, type ScreenshotConfig, type ScreenshotsOptions, type ScrnsBrowser, type ScrnsEngine, type ScrnsPage, expandHeaders, headerEnvRefs, isScreencast, parseConfig, previewScreenshot, resolveBaseUrl, resolveEngine, takeScreenshots };

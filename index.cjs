@@ -30,6 +30,8 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
+  expandHeaders: () => expandHeaders,
+  headerEnvRefs: () => headerEnvRefs,
   isScreencast: () => isScreencast,
   parseConfig: () => parseConfig,
   previewScreenshot: () => previewScreenshot,
@@ -60,22 +62,31 @@ async function createPuppeteerEngine() {
 }
 function wrapBrowser(browser) {
   return {
-    async newPage() {
+    async newPage(opts) {
+      if (opts?.storageState) {
+        throw new Error("`storageState` is only supported by the Playwright engine");
+      }
       const page = await browser.newPage();
-      return wrapPage(page);
+      if (opts?.headers) await page.setExtraHTTPHeaders(opts.headers);
+      const scale = opts?.scale ?? 1;
+      if (scale !== 1) {
+        const { width, height } = page.viewport() ?? { width: 800, height: 600 };
+        await page.setViewport({ width, height, deviceScaleFactor: scale });
+      }
+      return wrapPage(page, scale);
     },
     async close() {
       await browser.close();
     }
   };
 }
-function wrapPage(page) {
+function wrapPage(page, scale) {
   return {
     async goto(url) {
       await page.goto(url);
     },
     async setViewportSize(size) {
-      await page.setViewport(size);
+      await page.setViewport({ ...size, deviceScaleFactor: scale });
     },
     async waitForSelector(selector, opts) {
       await page.waitForSelector(selector, opts);
@@ -84,7 +95,8 @@ function wrapPage(page) {
       const result = await page.screenshot({
         path: opts?.path,
         encoding: "binary",
-        timeout: opts?.timeout
+        timeout: opts?.timeout,
+        clip: opts?.clip
       });
       return Buffer.from(result);
     },
@@ -125,6 +137,9 @@ function wrapPage(page) {
         behavior: "allow",
         downloadPath: dir
       });
+    },
+    async close() {
+      await page.close();
     }
   };
 }
@@ -145,16 +160,21 @@ async function createPlaywrightEngine() {
 }
 function wrapBrowser2(browser) {
   return {
-    async newPage() {
-      const page = await browser.newPage();
-      return wrapPage2(page);
+    async newPage(opts) {
+      const context = await browser.newContext({
+        extraHTTPHeaders: opts?.headers,
+        deviceScaleFactor: opts?.scale,
+        storageState: opts?.storageState
+      });
+      const page = await context.newPage();
+      return wrapPage2(page, () => context.close());
     },
     async close() {
       await browser.close();
     }
   };
 }
-function wrapPage2(page) {
+function wrapPage2(page, close) {
   return {
     async goto(url) {
       await page.goto(url);
@@ -166,7 +186,8 @@ function wrapPage2(page) {
       await page.waitForSelector(selector, { ...opts, state: "attached" });
     },
     async screenshot(opts) {
-      return page.screenshot({ path: opts?.path, timeout: opts?.timeout });
+      const clip = opts?.clip ? { clip: opts.clip, fullPage: true } : {};
+      return page.screenshot({ path: opts?.path, timeout: opts?.timeout, ...clip });
     },
     async evaluate(pageFunction, arg) {
       if (arg !== void 0) {
@@ -205,7 +226,8 @@ function wrapPage2(page) {
         behavior: "allow",
         downloadPath: dir
       });
-    }
+    },
+    close
   };
 }
 
@@ -232,7 +254,7 @@ var { GIFEncoder, quantize, applyPalette } = gifenc;
 function isScreencast(config) {
   return "actions" in config && Array.isArray(config.actions);
 }
-var SCREENSHOT_KEYS = ["query", "width", "height", "selector", "loadTimeout", "path", "preScreenshotSleep", "scrollY", "scrollTo", "scrollOffset", "download", "downloadSleep", "actions", "fps", "gifQuality", "loop", "videoCrf", "browserArgs", "headless", "screenshotTimeout"];
+var SCREENSHOT_KEYS = ["query", "width", "height", "selector", "loadTimeout", "path", "preScreenshotSleep", "scrollY", "scrollTo", "scrollOffset", "download", "downloadSleep", "actions", "fps", "gifQuality", "loop", "videoCrf", "browserArgs", "headless", "screenshotTimeout", "headers", "scale", "storageState", "crop"];
 function isScreens(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) && !SCREENSHOT_KEYS.some((k) => k in value);
 }
@@ -336,13 +358,12 @@ async function executeActions(page, actions, log) {
     }
   }
 }
-function encodeGif(frames, path, width, height, fps, loop, log) {
+function encodeGif(frames, path, fps, loop, log) {
   log(`Encoding GIF: ${frames.length} frames...`);
   const gif = GIFEncoder();
   const delay = Math.round(1e3 / fps);
   for (const frame of frames) {
-    const png = import_pngjs.PNG.sync.read(frame);
-    const { data } = png;
+    const { data, width, height } = import_pngjs.PNG.sync.read(frame);
     const palette = quantize(data, 256);
     const index = applyPalette(data, palette);
     gif.writeFrame(index, width, height, { palette, delay });
@@ -371,14 +392,14 @@ function assertFfmpeg() {
     throw new Error("ffmpeg not found. Install it to use video output:\n  brew install ffmpeg    # macOS\n  apt install ffmpeg     # Ubuntu/Debian");
   }
 }
-function createGifSink(path, width, height, fps, loop, log) {
+function createGifSink(path, fps, loop, log) {
   const frames = [];
   return {
     write(frame) {
       frames.push(frame);
     },
     finish() {
-      encodeGif(frames, path, width, height, fps, loop, log);
+      encodeGif(frames, path, fps, loop, log);
     }
   };
 }
@@ -395,6 +416,9 @@ function createVideoSink(path, fps, crf, log) {
     "-",
     "-c:v",
     codec,
+    // yuv420p needs even dims; crops can be odd
+    "-vf",
+    "pad=ceil(iw/2)*2:ceil(ih/2)*2",
     "-pix_fmt",
     "yuv420p"
   ];
@@ -429,17 +453,16 @@ function createVideoSink(path, fps, crf, log) {
     }
   };
 }
-function createSink(path, width, height, config, log) {
+function createSink(path, config, log) {
   const { fps = 15, loop = true, videoCrf = 23 } = config;
   if (isVideoExt(path)) {
     return createVideoSink(path, fps, videoCrf, log);
   }
-  return createGifSink(path, width, height, fps, loop, log);
+  return createGifSink(path, fps, loop, log);
 }
-async function recordFrameByFrame(page, config, path, width, height, log, screenshotTimeout) {
+async function recordFrameByFrame(page, config, path, log, ssOpts) {
   const { actions, fps = 15 } = config;
-  const sink = createSink(path, width, height, config, log);
-  const ssOpts = screenshotTimeout ? { timeout: screenshotTimeout } : void 0;
+  const sink = createSink(path, config, log);
   log(`Recording frame-by-frame screencast...`);
   for (const action of actions) {
     switch (action.type) {
@@ -473,11 +496,10 @@ async function recordFrameByFrame(page, config, path, width, height, log, screen
   }
   await sink.finish();
 }
-async function recordScreencastRealtime(page, config, path, width, height, log, screenshotTimeout) {
+async function recordScreencastRealtime(page, config, path, log, ssOpts) {
   const { actions, fps = 15 } = config;
   const frameInterval = 1e3 / fps;
-  const sink = createSink(path, width, height, config, log);
-  const ssOpts = screenshotTimeout ? { timeout: screenshotTimeout } : void 0;
+  const sink = createSink(path, config, log);
   await page.evaluate(() => document.dispatchEvent(new Event("scrns:capture-start")));
   let recording = true;
   const captureLoop = (async () => {
@@ -494,6 +516,55 @@ async function recordScreencastRealtime(page, config, path, width, height, log, 
   await captureLoop;
   await sink.finish();
 }
+var ENV_REF_RE = /\$(?:\{(\w+)\}|(\w+))/g;
+function headerEnvRefs(headers) {
+  const names = /* @__PURE__ */ new Set();
+  for (const value of Object.values(headers ?? {})) {
+    for (const m of value.matchAll(ENV_REF_RE)) names.add(m[1] ?? m[2]);
+  }
+  return [...names];
+}
+function expandHeaders(headers, env = process.env) {
+  return Object.fromEntries(Object.entries(headers).map(([name, value]) => [
+    name,
+    value.replace(ENV_REF_RE, (_, braced, bare) => {
+      const ref = braced ?? bare;
+      const v = env[ref];
+      if (v === void 0) throw new Error(`Header "${name}" references unset env var $${ref}`);
+      return v;
+    })
+  ]));
+}
+function resolvePageOptions(config, options) {
+  const merged = { ...options.headers, ...config.headers };
+  return {
+    headers: Object.keys(merged).length ? expandHeaders(merged) : void 0,
+    scale: config.scale ?? options.scale,
+    storageState: config.storageState ?? options.storageState
+  };
+}
+async function computeClip(page, crop) {
+  const { selector, padding = 0 } = typeof crop === "string" ? { selector: crop } : crop;
+  const clip = await page.evaluate(
+    ([sel, pad]) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const de = document.documentElement;
+      const pageW = Math.max(de.scrollWidth, document.body?.scrollWidth ?? 0);
+      const pageH = Math.max(de.scrollHeight, document.body?.scrollHeight ?? 0);
+      const x0 = Math.max(0, Math.floor(r.left + window.scrollX - pad));
+      const y0 = Math.max(0, Math.floor(r.top + window.scrollY - pad));
+      const x1 = Math.min(pageW, Math.ceil(r.right + window.scrollX + pad));
+      const y1 = Math.min(pageH, Math.ceil(r.bottom + window.scrollY + pad));
+      return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+    },
+    [selector, padding]
+  );
+  if (!clip) throw new Error(`crop selector "${selector}" not found`);
+  if (clip.width <= 0 || clip.height <= 0) throw new Error(`crop selector "${selector}" has an empty box`);
+  return clip;
+}
 var SWIFTSHADER_ARGS = ["--use-angle=swiftshader", "--use-gl=swiftshader"];
 async function takeScreenshots(screens, options) {
   const {
@@ -509,6 +580,7 @@ async function takeScreenshots(screens, options) {
   const defaultHeadless = options.headless ?? true;
   const engine = options.engine ?? await resolveEngine();
   const entries = Object.entries(screens).filter(([name]) => !include || name.match(include));
+  const pageOptions = new Map(entries.map(([name, config]) => [name, resolvePageOptions(config, options)]));
   const groups = /* @__PURE__ */ new Map();
   for (const entry of entries) {
     const headless = entry[1].headless ?? defaultHeadless;
@@ -527,9 +599,19 @@ async function takeScreenshots(screens, options) {
       args = args.filter((a) => !SWIFTSHADER_ARGS.includes(a) || explicitArgs.has(a));
     }
     const browser = await engine.launch({ headless, args });
-    const page = await browser.newPage();
+    let page;
+    let pageKey;
     try {
       for (const [name, config] of groupEntries) {
+        const pageOpts = pageOptions.get(name);
+        const key = JSON.stringify(pageOpts);
+        if (!page || key !== pageKey) {
+          await page?.close();
+          page = await browser.newPage(pageOpts);
+          pageKey = key;
+          const headerNames = Object.keys(pageOpts.headers ?? {});
+          if (headerNames.length) log(`Headers: ${headerNames.join(", ")}`);
+        }
         const screenshotTimeout = config.screenshotTimeout ?? defaultScreenshotTimeout;
         const ssOpts = { timeout: screenshotTimeout };
         const {
@@ -544,7 +626,8 @@ async function takeScreenshots(screens, options) {
           scrollTo,
           scrollOffset = 0,
           download = false,
-          downloadSleep = defaultDownloadSleep
+          downloadSleep = defaultDownloadSleep,
+          crop
         } = config;
         const url = `${baseUrl}/${query}`;
         const defaultExt = isScreencast(config) ? ".gif" : ".png";
@@ -588,14 +671,19 @@ async function takeScreenshots(screens, options) {
         if (preScreenshotSleep > 0) {
           await sleep(preScreenshotSleep);
         }
+        if (crop) {
+          ssOpts.clip = await computeClip(page, crop);
+          const { x, y, width: w, height: h } = ssOpts.clip;
+          log(`Cropping to ${w}x${h} at (${x}, ${y})`);
+        }
         if (download) {
           await sleep(downloadSleep);
           log("Download complete");
         } else if (isScreencast(config)) {
           if (hasAnimateAction(config.actions)) {
-            await recordFrameByFrame(page, config, path, width, height, log, screenshotTimeout);
+            await recordFrameByFrame(page, config, path, log, ssOpts);
           } else {
-            await recordScreencastRealtime(page, config, path, width, height, log, screenshotTimeout);
+            await recordScreencastRealtime(page, config, path, log, ssOpts);
           }
         } else {
           ssOpts.path = path;
@@ -634,8 +722,9 @@ async function previewScreenshot(config, options) {
     ...options.browserArgs ?? [],
     ...config.browserArgs ?? []
   ];
+  const pageOpts = resolvePageOptions(config, options);
   const browser = await engine.launch({ headless: false, args });
-  const page = await browser.newPage();
+  const page = await browser.newPage(pageOpts);
   try {
     await page.setViewportSize({ width, height });
     log(`Loading ${url}`);
@@ -684,6 +773,8 @@ async function previewScreenshot(config, options) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  expandHeaders,
+  headerEnvRefs,
   isScreencast,
   parseConfig,
   previewScreenshot,
