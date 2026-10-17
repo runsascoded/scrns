@@ -1,8 +1,17 @@
+export type Clip = { x: number; y: number; width: number; height: number }
+
+export interface ScreenshotOptions {
+  path?: string
+  timeout?: number
+  /** Region to capture, in document (not viewport) CSS-pixel coordinates */
+  clip?: Clip
+}
+
 export interface ScrnsPage {
   goto(url: string): Promise<void>
   setViewportSize(size: { width: number; height: number }): Promise<void>
   waitForSelector(selector: string, opts?: { timeout?: number }): Promise<void>
-  screenshot(opts?: { path?: string; timeout?: number }): Promise<Buffer>
+  screenshot(opts?: ScreenshotOptions): Promise<Buffer>
   evaluate<R>(pageFunction: string | ((...args: any[]) => R), arg?: any): Promise<R>
   keyboard: {
     down(key: string): Promise<void>
@@ -16,10 +25,20 @@ export interface ScrnsPage {
     up(opts?: { button?: 'left' | 'right' }): Promise<void>
   }
   setDownloadPath(dir: string): Promise<void>
+  close(): Promise<void>
+}
+
+export interface PageOptions {
+  /** Extra HTTP headers sent with every request from the page */
+  headers?: Record<string, string>
+  /** Device scale factor (default: 1) */
+  scale?: number
+  /** Path to a Playwright storage-state JSON (cookies + localStorage); Playwright only */
+  storageState?: string
 }
 
 export interface ScrnsBrowser {
-  newPage(): Promise<ScrnsPage>
+  newPage(opts?: PageOptions): Promise<ScrnsPage>
   close(): Promise<void>
 }
 

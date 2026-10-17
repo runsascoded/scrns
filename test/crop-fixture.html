@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>scrns crop test fixture</title>
+  <style>
+    body {
+      margin: 0;
+      height: 2000px;
+      background: white;
+    }
+    div {
+      position: absolute;
+      background: rgb(255, 0, 0);
+    }
+    /* Below the fold of a 600px viewport */
+    #panel { top: 1200px; left: 40px; width: 120px; height: 70px; }
+    /* Flush with the page's top-left corner, so padding gets clamped */
+    #corner { top: 0; left: 0; width: 50px; height: 30px; }
+  </style>
+</head>
+<body>
+  <div id="panel"></div>
+  <div id="corner"></div>
+</body>
+</html>

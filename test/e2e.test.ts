@@ -1,9 +1,29 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { takeScreenshots, resolveEngine, ScreencastConfig, Screens, Config, parseConfig, resolveBaseUrl } from '../src/index.js'
+import { takeScreenshots, resolveEngine, ScreencastConfig, Screens, Config, parseConfig, resolveBaseUrl, expandHeaders, headerEnvRefs } from '../src/index.js'
 import type { ScrnsEngine, EngineName } from '../src/index.js'
 import { spawn, execFileSync, execSync, ChildProcess } from 'child_process'
 import { existsSync, rmSync, mkdirSync, readFileSync, statSync } from 'fs'
+import { createServer, Server } from 'http'
 import { resolve } from 'path'
+import { PNG } from 'pngjs'
+
+function pngDims(path: string): { width: number, height: number } {
+  const { width, height } = PNG.sync.read(readFileSync(path))
+  return { width, height }
+}
+
+/** RGB of the pixel at (x, y) */
+function pngPixel(path: string, x: number, y: number): [number, number, number] {
+  const { width, data } = PNG.sync.read(readFileSync(path))
+  const i = 4 * (y * width + x)
+  return [data[i], data[i + 1], data[i + 2]]
+}
+
+function gifDims(path: string): { width: number, height: number } {
+  // Logical screen descriptor, right after the 6-byte header
+  const buf = readFileSync(path)
+  return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) }
+}
 
 /** Count frames in a GIF by parsing the block structure (not naive byte scanning). */
 function countGifFrames(buf: Buffer): number {
@@ -71,10 +91,17 @@ async function hasEngine(name: EngineName): Promise<boolean> {
 }
 
 const TEST_PORT = 9876
+const AUTH_PORT = 9877
+const AUTH_TOKEN = 'test-token'
 const BASE_TEST_DIR = resolve(import.meta.dirname, 'output')
 const FIXTURE_DIR = resolve(import.meta.dirname)
 
 let server: ChildProcess
+
+/** Requests to the auth server: [path, Authorization, X-Global] */
+type AuthRequest = [string, string | undefined, string | undefined]
+let authRequests: AuthRequest[] = []
+let authServer: Server
 
 // Detect available engines
 const availableEngines: EngineName[] = []
@@ -107,10 +134,32 @@ beforeAll(async () => {
       reject(err)
     })
   })
+
+  // 401s without `Authorization: Bearer <AUTH_TOKEN>`; the authed page `fetch`es `/api`, then renders `#authed`
+  authServer = createServer((req, res) => {
+    const auth = req.headers['authorization']
+    const path = req.url ?? ''
+    if (path !== '/auth.html' && path !== '/api') {
+      res.writeHead(404).end()
+      return
+    }
+    authRequests.push([path, auth, req.headers['x-global'] as string | undefined])
+    if (auth !== `Bearer ${AUTH_TOKEN}`) {
+      res.writeHead(401, { 'Content-Type': 'text/plain' }).end('unauthorized')
+    } else if (path === '/api') {
+      res.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok')
+    } else {
+      res.writeHead(200, { 'Content-Type': 'text/html' }).end(
+        `<body><script>fetch('/api').then(r => { if (r.ok) document.body.innerHTML = '<div id="authed">ok</div>' })</script></body>`,
+      )
+    }
+  })
+  await new Promise<void>(resolve => authServer.listen(AUTH_PORT, '127.0.0.1', resolve))
 })
 
 afterAll(() => {
   server?.kill()
+  authServer?.close()
 })
 
 describe.each(availableEngines)('scrns e2e (%s)', (engineName) => {
@@ -337,6 +386,151 @@ describe.each(availableEngines)('scrns e2e (%s)', (engineName) => {
     expect(existsSync(resolve(testDir, 'cast-default-ext.png'))).toBe(false)
   })
 
+  it('`scale: 2` doubles output dimensions', async () => {
+    await takeScreenshots({
+      'scale-2': { query: 'fixture.html', width: 300, height: 200, scale: 2 },
+    }, {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: testDir,
+      log: () => {},
+      engine,
+    })
+    expect(pngDims(resolve(testDir, 'scale-2.png'))).toEqual({ width: 600, height: 400 })
+  })
+
+  it('crops to an off-viewport element, with padding and scale', async () => {
+    await takeScreenshots({
+      'crop-panel': {
+        query: 'crop-fixture.html',
+        width: 800,
+        height: 600,
+        scale: 2,
+        crop: { selector: '#panel', padding: 10 },
+      },
+    }, {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: testDir,
+      log: () => {},
+      engine,
+    })
+    const path = resolve(testDir, 'crop-panel.png')
+    // (120 + 2·10) × (70 + 2·10), × 2
+    expect(pngDims(path)).toEqual({ width: 280, height: 180 })
+    // Padding is page background; the element fills the rest
+    expect(pngPixel(path, 5, 5)).toEqual([255, 255, 255])
+    expect(pngPixel(path, 140, 90)).toEqual([255, 0, 0])
+  })
+
+  it('clamps crop padding to the page', async () => {
+    await takeScreenshots({
+      'crop-corner': {
+        query: 'crop-fixture.html',
+        crop: { selector: '#corner', padding: 10 },
+      },
+    }, {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: testDir,
+      log: () => {},
+      engine,
+    })
+    // Padding only on the right / bottom: the element is flush with the page's top-left
+    expect(pngDims(resolve(testDir, 'crop-corner.png'))).toEqual({ width: 60, height: 40 })
+  })
+
+  it('rejects when the crop selector matches nothing', async () => {
+    await expect(takeScreenshots({
+      'crop-missing': { query: 'crop-fixture.html', crop: '#nope' },
+    }, {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: testDir,
+      log: () => {},
+      engine,
+    })).rejects.toThrow(new Error('crop selector "#nope" not found'))
+  })
+
+  it('crops every screencast frame', async () => {
+    await takeScreenshots({
+      'crop-cast': {
+        query: 'crop-fixture.html',
+        crop: '#panel',
+        actions: [{ type: 'wait', duration: 200 }],
+        fps: 10,
+      } satisfies ScreencastConfig,
+    }, {
+      baseUrl: `http://127.0.0.1:${TEST_PORT}`,
+      outputDir: testDir,
+      log: () => {},
+      engine,
+    })
+    expect(gifDims(resolve(testDir, 'crop-cast.gif'))).toEqual({ width: 120, height: 70 })
+  })
+
+  describe('headers', () => {
+    const authUrl = `http://127.0.0.1:${AUTH_PORT}`
+
+    beforeAll(() => { process.env.SCRNS_TEST_TOKEN = AUTH_TOKEN })
+    afterAll(() => { delete process.env.SCRNS_TEST_TOKEN })
+
+    it('sends env-expanded headers with navigations and in-page fetches', async () => {
+      authRequests = []
+      await takeScreenshots({
+        'auth': {
+          query: 'auth.html',
+          selector: '#authed',
+          loadTimeout: 5000,
+          headers: { Authorization: 'Bearer $SCRNS_TEST_TOKEN' },
+        },
+      }, {
+        baseUrl: authUrl,
+        outputDir: testDir,
+        log: () => {},
+        engine,
+      })
+      expect(existsSync(resolve(testDir, 'auth.png'))).toBe(true)
+      expect(authRequests).toEqual([
+        ['/auth.html', `Bearer ${AUTH_TOKEN}`, undefined],
+        ['/api', `Bearer ${AUTH_TOKEN}`, undefined],
+      ])
+    })
+
+    it('times out waiting for the authed page without headers', async () => {
+      authRequests = []
+      await expect(takeScreenshots({
+        'unauth': { query: 'auth.html', selector: '#authed', loadTimeout: 1000 },
+      }, {
+        baseUrl: authUrl,
+        outputDir: testDir,
+        log: () => {},
+        engine,
+      })).rejects.toThrow()
+      expect(authRequests).toEqual([['/auth.html', undefined, undefined]])
+    })
+
+    it('merges per-shot headers over global ones, with a fresh page per header set', async () => {
+      authRequests = []
+      await takeScreenshots({
+        'global-only': { query: 'auth.html' },
+        'override': {
+          query: 'auth.html',
+          selector: '#authed',
+          loadTimeout: 5000,
+          headers: { Authorization: 'Bearer ${SCRNS_TEST_TOKEN}' },
+        },
+      }, {
+        baseUrl: authUrl,
+        outputDir: testDir,
+        log: () => {},
+        engine,
+        headers: { Authorization: 'Bearer wrong', 'X-Global': 'g' },
+      })
+      expect(authRequests).toEqual([
+        ['/auth.html', 'Bearer wrong', 'g'],
+        ['/auth.html', `Bearer ${AUTH_TOKEN}`, 'g'],
+        ['/api', `Bearer ${AUTH_TOKEN}`, 'g'],
+      ])
+    })
+  })
+
   describe.skipIf(!hasFfmpeg())('video output', () => {
     it('produces an mp4 via real-time capture', async () => {
       await takeScreenshots({
@@ -403,6 +597,39 @@ describe.each(availableEngines)('scrns e2e (%s)', (engineName) => {
       const buf2 = readFileSync(mp4Path)
       expect(Buffer.compare(buf1, buf2)).toBe(0)
     })
+  })
+})
+
+describe('headers env expansion', () => {
+  it('expands `$NAME` and `${NAME}` refs', () => {
+    expect(expandHeaders(
+      { Authorization: 'Bearer $TOK', 'X-Both': 'a-${TOK}-b', 'X-Plain': 'plain' },
+      { TOK: 't0k' },
+    )).toEqual({ Authorization: 'Bearer t0k', 'X-Both': 'a-t0k-b', 'X-Plain': 'plain' })
+  })
+  it('throws on an unset env var, naming the header and var', () => {
+    expect(() => expandHeaders({ Authorization: 'Bearer $NOPE' }, {}))
+      .toThrow(new Error('Header "Authorization" references unset env var $NOPE'))
+  })
+  it('lists referenced env var names, deduped', () => {
+    expect(headerEnvRefs({ A: '$X ${Y}', B: '$X' })).toEqual(['X', 'Y'])
+  })
+  it('errors on an unset env var before launching a browser', async () => {
+    const launches: string[] = []
+    const engine: ScrnsEngine = {
+      name: 'fake',
+      async launch() { launches.push('launch'); throw new Error('should not launch') },
+    }
+    await expect(takeScreenshots({
+      'a': { query: 'x' },
+      'b': { query: 'y', headers: { Authorization: 'Bearer $SCRNS_TEST_UNSET' } },
+    }, {
+      baseUrl: 'http://127.0.0.1:1',
+      outputDir: BASE_TEST_DIR,
+      log: () => {},
+      engine,
+    })).rejects.toThrow(new Error('Header "Authorization" references unset env var $SCRNS_TEST_UNSET'))
+    expect(launches).toEqual([])
   })
 })
 

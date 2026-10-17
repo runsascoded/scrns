@@ -3,7 +3,7 @@
 import { program } from 'commander'
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
-import { takeScreenshots, previewScreenshot, resolveEngine, Screens, Config, ScreenshotConfig, parseConfig, resolveBaseUrl } from './index.js'
+import { takeScreenshots, previewScreenshot, resolveEngine, Screens, Config, ScreenshotConfig, parseConfig, resolveBaseUrl, headerEnvRefs } from './index.js'
 import type { EngineName } from './index.js'
 import { runInDocker } from './docker.js'
 
@@ -48,6 +48,9 @@ type ResolvedConfig = {
   engine?: EngineName
   browserArgs: string[]
   headless?: boolean
+  headers?: Record<string, string>
+  scale?: number
+  storageState?: string
   docker?: boolean
   dockerImage?: string
   dockerPlatform?: string
@@ -101,6 +104,9 @@ async function loadResolvedConfig(opts: {
     engine,
     browserArgs,
     headless,
+    headers: configOptions.headers,
+    scale: configOptions.scale,
+    storageState: configOptions.storageState,
     docker: opts.docker ?? configOptions.docker,
     dockerImage: opts.dockerImage ?? configOptions.dockerImage,
     dockerPlatform: opts.dockerPlatform ?? configOptions.dockerPlatform,
@@ -148,6 +154,10 @@ addSharedOptions(program)
         screenshotTimeout: resolved.defaultScreenshotTimeout,
         include: opts.include,
         browserArgs: resolved.browserArgs.length ? resolved.browserArgs : undefined,
+        envVars: [...new Set([
+          ...headerEnvRefs(resolved.headers),
+          ...Object.values(resolved.screens).flatMap(s => headerEnvRefs(s.headers)),
+        ])],
         dockerImage: resolved.dockerImage,
         dockerPlatform: resolved.dockerPlatform,
         version: opts.dockerScrns,
@@ -168,6 +178,9 @@ addSharedOptions(program)
       engine,
       browserArgs: resolved.browserArgs,
       headless: resolved.headless,
+      headers: resolved.headers,
+      scale: resolved.scale,
+      storageState: resolved.storageState,
     })
   })
 
@@ -188,6 +201,7 @@ addSharedOptions(previewCmd)
     let defaultLoadTimeout: number | undefined
     let engineName: EngineName | undefined
     let browserArgs: string[] = []
+    let pageOpts: Pick<ResolvedConfig, 'headers' | 'scale' | 'storageState'> = {}
 
     if (cmdOpts.url) {
       // --url mode: no config file needed
@@ -210,6 +224,7 @@ addSharedOptions(previewCmd)
       defaultLoadTimeout = resolved.defaultLoadTimeout
       engineName = resolved.engine
       browserArgs = resolved.browserArgs
+      pageOpts = { headers: resolved.headers, scale: resolved.scale, storageState: resolved.storageState }
 
       if (name) {
         config = resolved.screens[name]
@@ -236,6 +251,7 @@ addSharedOptions(previewCmd)
       log,
       engine,
       browserArgs,
+      ...pageOpts,
     })
 
     const label = name ? `"${name}"` : 'preview'

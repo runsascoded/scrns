@@ -1,4 +1,4 @@
-import type { ScrnsEngine, ScrnsBrowser, ScrnsPage } from './types.js'
+import type { ScrnsEngine, ScrnsBrowser, ScrnsPage, PageOptions, ScreenshotOptions } from './types.js'
 
 export async function createPlaywrightEngine(): Promise<ScrnsEngine> {
   const { chromium } = await import('playwright')
@@ -16,9 +16,15 @@ export async function createPlaywrightEngine(): Promise<ScrnsEngine> {
 
 function wrapBrowser(browser: any): ScrnsBrowser {
   return {
-    async newPage() {
-      const page = await browser.newPage()
-      return wrapPage(page)
+    async newPage(opts?: PageOptions) {
+      // One context per page, so headers / scale / storage state don't leak between shots
+      const context = await browser.newContext({
+        extraHTTPHeaders: opts?.headers,
+        deviceScaleFactor: opts?.scale,
+        storageState: opts?.storageState,
+      })
+      const page = await context.newPage()
+      return wrapPage(page, () => context.close())
     },
     async close() {
       await browser.close()
@@ -26,7 +32,7 @@ function wrapBrowser(browser: any): ScrnsBrowser {
   }
 }
 
-function wrapPage(page: any): ScrnsPage {
+function wrapPage(page: any, close: () => Promise<void>): ScrnsPage {
   return {
     async goto(url: string) {
       await page.goto(url)
@@ -39,8 +45,10 @@ function wrapPage(page: any): ScrnsPage {
       // rather than Playwright's default 'visible' which can fail on hidden SVG elements etc.
       await page.waitForSelector(selector, { ...opts, state: 'attached' })
     },
-    async screenshot(opts?: { path?: string; timeout?: number }): Promise<Buffer> {
-      return page.screenshot({ path: opts?.path, timeout: opts?.timeout })
+    async screenshot(opts?: ScreenshotOptions): Promise<Buffer> {
+      // Playwright's `clip` is viewport-relative unless `fullPage` is set; scrns clips are document-relative
+      const clip = opts?.clip ? { clip: opts.clip, fullPage: true } : {}
+      return page.screenshot({ path: opts?.path, timeout: opts?.timeout, ...clip })
     },
     async evaluate<R>(pageFunction: string | ((...args: any[]) => R), arg?: any): Promise<R> {
       if (arg !== undefined) {
@@ -74,5 +82,6 @@ function wrapPage(page: any): ScrnsPage {
         downloadPath: dir,
       })
     },
+    close,
   }
 }

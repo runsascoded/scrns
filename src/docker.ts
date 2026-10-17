@@ -20,6 +20,8 @@ export type DockerOptions = {
   screenshotTimeout?: number
   include?: string
   browserArgs?: string[]
+  /** Env vars to pass through to the container (by name, so values stay off the command line) */
+  envVars?: string[]
   headful?: boolean
   dockerImage?: string
   dockerPlatform?: string
@@ -146,6 +148,10 @@ export async function runInDocker(opts: DockerOptions): Promise<void> {
 
   for (const mount of extraMounts) {
     dockerArgs.push(...mount)
+  }
+
+  for (const name of opts.envVars ?? []) {
+    dockerArgs.push('-e', name)
   }
 
   dockerArgs.push(image)

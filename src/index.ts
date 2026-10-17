@@ -44,6 +44,23 @@ export type ScreenshotConfig = {
   headless?: boolean
   /** Timeout in ms for page.screenshot() calls (default: 30000) */
   screenshotTimeout?: number
+  /**
+   * Extra HTTP headers for every request from the page (merged over config-level `headers`).
+   * Values may reference env vars as `$NAME` / `${NAME}`; an unset var is an error.
+   */
+  headers?: Record<string, string>
+  /** Device scale factor, e.g. 2 for retina captures (default: 1) */
+  scale?: number
+  /** Playwright storage-state JSON path (cookies + localStorage); Playwright only */
+  storageState?: string
+  /** Capture only the first element matching this selector (optionally padded, clamped to the page) */
+  crop?: string | CropConfig
+}
+
+export type CropConfig = {
+  selector: string
+  /** CSS pixels of padding around the element's box (default: 0) */
+  padding?: number
 }
 
 export type ScreencastAction =
@@ -88,6 +105,9 @@ export type Config = {
   browserArgs?: string[]
   headless?: boolean
   screenshotTimeout?: number
+  headers?: Record<string, string>
+  scale?: number
+  storageState?: string
   docker?: boolean
   dockerImage?: string
   dockerPlatform?: string
@@ -95,7 +115,7 @@ export type Config = {
 }
 
 /** Screenshot entry keys that distinguish a ScreenshotConfig from a nested Screens */
-const SCREENSHOT_KEYS = ['query', 'width', 'height', 'selector', 'loadTimeout', 'path', 'preScreenshotSleep', 'scrollY', 'scrollTo', 'scrollOffset', 'download', 'downloadSleep', 'actions', 'fps', 'gifQuality', 'loop', 'videoCrf', 'browserArgs', 'headless', 'screenshotTimeout'] as const
+const SCREENSHOT_KEYS = ['query', 'width', 'height', 'selector', 'loadTimeout', 'path', 'preScreenshotSleep', 'scrollY', 'scrollTo', 'scrollOffset', 'download', 'downloadSleep', 'actions', 'fps', 'gifQuality', 'loop', 'videoCrf', 'browserArgs', 'headless', 'screenshotTimeout', 'headers', 'scale', 'storageState', 'crop'] as const
 
 function isScreens(value: unknown): value is Screens {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -118,7 +138,7 @@ export function resolveBaseUrl(host?: string | number, https?: boolean): string 
   return `${https ? 'https' : 'http'}://${h}`
 }
 
-import type { ScrnsEngine, ScrnsPage } from './engines/types.js'
+import type { ScrnsEngine, ScrnsPage, PageOptions, Clip, ScreenshotOptions } from './engines/types.js'
 import type { EngineName } from './engines/resolve.js'
 import { resolveEngine } from './engines/resolve.js'
 
@@ -145,6 +165,12 @@ export type ScreenshotsOptions = {
   headless?: boolean
   /** Default screenshot timeout in ms (default: 30000) */
   defaultScreenshotTimeout?: number
+  /** Extra HTTP headers for every request (per-screenshot `headers` merge over these) */
+  headers?: Record<string, string>
+  /** Default device scale factor (default: 1) */
+  scale?: number
+  /** Default Playwright storage-state JSON path */
+  storageState?: string
 }
 
 const DEFAULT_WIDTH = 800
@@ -246,8 +272,6 @@ async function executeActions(
 function encodeGif(
   frames: Buffer[],
   path: string,
-  width: number,
-  height: number,
   fps: number,
   loop: boolean,
   log: (message: string) => void,
@@ -256,8 +280,8 @@ function encodeGif(
   const gif = GIFEncoder()
   const delay = Math.round(1000 / fps)
   for (const frame of frames) {
-    const png = PNG.sync.read(frame)
-    const { data } = png
+    // Frame dims (not viewport dims): crop and scale both change them
+    const { data, width, height } = PNG.sync.read(frame)
     const palette = quantize(data, 256)
     const index = applyPalette(data, palette)
     gif.writeFrame(index, width, height, { palette, delay })
@@ -298,8 +322,6 @@ interface FrameSink {
 
 function createGifSink(
   path: string,
-  width: number,
-  height: number,
   fps: number,
   loop: boolean,
   log: (message: string) => void,
@@ -307,7 +329,7 @@ function createGifSink(
   const frames: Buffer[] = []
   return {
     write(frame: Buffer) { frames.push(frame) },
-    finish() { encodeGif(frames, path, width, height, fps, loop, log) },
+    finish() { encodeGif(frames, path, fps, loop, log) },
   }
 }
 
@@ -325,6 +347,8 @@ function createVideoSink(
     '-framerate', String(fps),
     '-i', '-',
     '-c:v', codec,
+    // yuv420p needs even dims; crops can be odd
+    '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
     '-pix_fmt', 'yuv420p',
   ]
   if (codec === 'libvpx-vp9') {
@@ -357,8 +381,6 @@ function createVideoSink(
 
 function createSink(
   path: string,
-  width: number,
-  height: number,
   config: ScreencastConfig,
   log: (message: string) => void,
 ): FrameSink {
@@ -366,21 +388,18 @@ function createSink(
   if (isVideoExt(path)) {
     return createVideoSink(path, fps, videoCrf, log)
   }
-  return createGifSink(path, width, height, fps, loop, log)
+  return createGifSink(path, fps, loop, log)
 }
 
 async function recordFrameByFrame(
   page: ScrnsPage,
   config: ScreencastConfig,
   path: string,
-  width: number,
-  height: number,
   log: (message: string) => void,
-  screenshotTimeout?: number,
+  ssOpts: ScreenshotOptions,
 ): Promise<void> {
   const { actions, fps = 15 } = config
-  const sink = createSink(path, width, height, config, log)
-  const ssOpts = screenshotTimeout ? { timeout: screenshotTimeout } : undefined
+  const sink = createSink(path, config, log)
 
   log(`Recording frame-by-frame screencast...`)
 
@@ -422,15 +441,12 @@ async function recordScreencastRealtime(
   page: ScrnsPage,
   config: ScreencastConfig,
   path: string,
-  width: number,
-  height: number,
   log: (message: string) => void,
-  screenshotTimeout?: number,
+  ssOpts: ScreenshotOptions,
 ): Promise<void> {
   const { actions, fps = 15 } = config
   const frameInterval = 1000 / fps
-  const sink = createSink(path, width, height, config, log)
-  const ssOpts = screenshotTimeout ? { timeout: screenshotTimeout } : undefined
+  const sink = createSink(path, config, log)
 
   // Signal the page that capture is about to start
   await page.evaluate(() => document.dispatchEvent(new Event('scrns:capture-start')))
@@ -452,6 +468,69 @@ async function recordScreencastRealtime(
   await captureLoop
 
   await sink.finish()
+}
+
+const ENV_REF_RE = /\$(?:\{(\w+)\}|(\w+))/g
+
+/** Names of env vars referenced (as `$NAME` / `${NAME}`) by header values */
+export function headerEnvRefs(headers?: Record<string, string>): string[] {
+  const names = new Set<string>()
+  for (const value of Object.values(headers ?? {})) {
+    for (const m of value.matchAll(ENV_REF_RE)) names.add(m[1] ?? m[2])
+  }
+  return [...names]
+}
+
+/** Expand `$NAME` / `${NAME}` env refs in header values; throws on unset vars (never echoes values) */
+export function expandHeaders(
+  headers: Record<string, string>,
+  env: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers).map(([name, value]) => [
+    name,
+    value.replace(ENV_REF_RE, (_, braced: string | undefined, bare: string | undefined) => {
+      const ref = (braced ?? bare)!
+      const v = env[ref]
+      if (v === undefined) throw new Error(`Header "${name}" references unset env var $${ref}`)
+      return v
+    }),
+  ]))
+}
+
+function resolvePageOptions(
+  config: ScreenshotConfig,
+  options: Pick<ScreenshotsOptions, 'headers' | 'scale' | 'storageState'>,
+): PageOptions {
+  const merged = { ...options.headers, ...config.headers }
+  return {
+    headers: Object.keys(merged).length ? expandHeaders(merged) : undefined,
+    scale: config.scale ?? options.scale,
+    storageState: config.storageState ?? options.storageState,
+  }
+}
+
+/** Document-coordinate box of the crop element (+ padding), snapped outward to whole pixels and clamped to the page */
+async function computeClip(page: ScrnsPage, crop: string | CropConfig): Promise<Clip> {
+  const { selector, padding = 0 } = typeof crop === 'string' ? { selector: crop } : crop
+  const clip = await page.evaluate(
+    ([sel, pad]: [string, number]) => {
+      const el = document.querySelector(sel)
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      const de = document.documentElement
+      const pageW = Math.max(de.scrollWidth, document.body?.scrollWidth ?? 0)
+      const pageH = Math.max(de.scrollHeight, document.body?.scrollHeight ?? 0)
+      const x0 = Math.max(0, Math.floor(r.left + window.scrollX - pad))
+      const y0 = Math.max(0, Math.floor(r.top + window.scrollY - pad))
+      const x1 = Math.min(pageW, Math.ceil(r.right + window.scrollX + pad))
+      const y1 = Math.min(pageH, Math.ceil(r.bottom + window.scrollY + pad))
+      return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
+    },
+    [selector, padding] as [string, number],
+  )
+  if (!clip) throw new Error(`crop selector "${selector}" not found`)
+  if (clip.width <= 0 || clip.height <= 0) throw new Error(`crop selector "${selector}" has an empty box`)
+  return clip
 }
 
 /** SwiftShader-related args that should be filtered out in headful mode */
@@ -479,6 +558,9 @@ export async function takeScreenshots(
   const entries = Object.entries(screens)
     .filter(([name]) => !include || name.match(include))
 
+  // Resolve (and validate env refs in) every shot's page options before launching anything
+  const pageOptions = new Map(entries.map(([name, config]) => [name, resolvePageOptions(config, options)]))
+
   // Group by effective headless mode
   const groups = new Map<boolean, [string, ScreenshotConfig | ScreencastConfig][]>()
   for (const entry of entries) {
@@ -502,12 +584,23 @@ export async function takeScreenshots(
     }
 
     const browser = await engine.launch({ headless, args })
-    const page = await browser.newPage()
+    // Reuse the page across shots with identical page options; open a fresh one when they change
+    let page: ScrnsPage | undefined
+    let pageKey: string | undefined
 
     try {
       for (const [name, config] of groupEntries) {
+        const pageOpts = pageOptions.get(name)!
+        const key = JSON.stringify(pageOpts)
+        if (!page || key !== pageKey) {
+          await page?.close()
+          page = await browser.newPage(pageOpts)
+          pageKey = key
+          const headerNames = Object.keys(pageOpts.headers ?? {})
+          if (headerNames.length) log(`Headers: ${headerNames.join(', ')}`)
+        }
         const screenshotTimeout = config.screenshotTimeout ?? defaultScreenshotTimeout
-        const ssOpts: { path?: string; timeout?: number } = { timeout: screenshotTimeout }
+        const ssOpts: ScreenshotOptions = { timeout: screenshotTimeout }
 
         const {
           path: configPath,
@@ -522,6 +615,7 @@ export async function takeScreenshots(
           scrollOffset = 0,
           download = false,
           downloadSleep = defaultDownloadSleep,
+          crop,
         } = config
 
         const url = `${baseUrl}/${query}`
@@ -577,14 +671,20 @@ export async function takeScreenshots(
           await sleep(preScreenshotSleep)
         }
 
+        if (crop) {
+          ssOpts.clip = await computeClip(page, crop)
+          const { x, y, width: w, height: h } = ssOpts.clip
+          log(`Cropping to ${w}x${h} at (${x}, ${y})`)
+        }
+
         if (download) {
           await sleep(downloadSleep)
           log('Download complete')
         } else if (isScreencast(config)) {
           if (hasAnimateAction(config.actions)) {
-            await recordFrameByFrame(page, config, path, width, height, log, screenshotTimeout)
+            await recordFrameByFrame(page, config, path, log, ssOpts)
           } else {
-            await recordScreencastRealtime(page, config, path, width, height, log, screenshotTimeout)
+            await recordScreencastRealtime(page, config, path, log, ssOpts)
           }
         } else {
           ssOpts.path = path
@@ -619,6 +719,9 @@ export async function previewScreenshot(
     log?: (message: string) => void
     engine?: ScrnsEngine
     browserArgs?: string[]
+    headers?: Record<string, string>
+    scale?: number
+    storageState?: string
   },
 ): Promise<PreviewResult> {
   const {
@@ -646,8 +749,9 @@ export async function previewScreenshot(
     ...(options.browserArgs ?? []),
     ...(config.browserArgs ?? []),
   ]
+  const pageOpts = resolvePageOptions(config, options)
   const browser = await engine.launch({ headless: false, args })
-  const page = await browser.newPage()
+  const page = await browser.newPage(pageOpts)
 
   try {
     await page.setViewportSize({ width, height })

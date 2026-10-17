@@ -1,4 +1,4 @@
-import type { ScrnsEngine, ScrnsBrowser, ScrnsPage } from './types.js'
+import type { ScrnsEngine, ScrnsBrowser, ScrnsPage, PageOptions, ScreenshotOptions } from './types.js'
 
 export async function createPuppeteerEngine(): Promise<ScrnsEngine> {
   const puppeteer = (await import('puppeteer')).default
@@ -16,9 +16,18 @@ export async function createPuppeteerEngine(): Promise<ScrnsEngine> {
 
 function wrapBrowser(browser: any): ScrnsBrowser {
   return {
-    async newPage() {
+    async newPage(opts?: PageOptions) {
+      if (opts?.storageState) {
+        throw new Error('`storageState` is only supported by the Playwright engine')
+      }
       const page = await browser.newPage()
-      return wrapPage(page)
+      if (opts?.headers) await page.setExtraHTTPHeaders(opts.headers)
+      const scale = opts?.scale ?? 1
+      if (scale !== 1) {
+        const { width, height } = page.viewport() ?? { width: 800, height: 600 }
+        await page.setViewport({ width, height, deviceScaleFactor: scale })
+      }
+      return wrapPage(page, scale)
     },
     async close() {
       await browser.close()
@@ -26,22 +35,23 @@ function wrapBrowser(browser: any): ScrnsBrowser {
   }
 }
 
-function wrapPage(page: any): ScrnsPage {
+function wrapPage(page: any, scale: number): ScrnsPage {
   return {
     async goto(url: string) {
       await page.goto(url)
     },
     async setViewportSize(size: { width: number; height: number }) {
-      await page.setViewport(size)
+      await page.setViewport({ ...size, deviceScaleFactor: scale })
     },
     async waitForSelector(selector: string, opts?: { timeout?: number }) {
       await page.waitForSelector(selector, opts)
     },
-    async screenshot(opts?: { path?: string; timeout?: number }): Promise<Buffer> {
+    async screenshot(opts?: ScreenshotOptions): Promise<Buffer> {
       const result = await page.screenshot({
         path: opts?.path,
         encoding: 'binary',
         timeout: opts?.timeout,
+        clip: opts?.clip,
       })
       return Buffer.from(result)
     },
@@ -76,6 +86,9 @@ function wrapPage(page: any): ScrnsPage {
         behavior: 'allow',
         downloadPath: dir,
       })
+    },
+    async close() {
+      await page.close()
     },
   }
 }

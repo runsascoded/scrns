@@ -97,6 +97,7 @@ scrns -D
 - The image defaults to `mcr.microsoft.com/playwright:v<version>-noble`, matching the installed Playwright version; override with `--docker-image`.
 - When run from a scrns checkout (local dev), the local build is packed and mounted; otherwise the installed version is reused. Pin explicitly with `--docker-scrns <ver>` (npm version, bare SHA, or `gh:<sha>` / `gl:<sha>`).
 - `docker`, `dockerImage`, and `dockerPlatform` can also be set in the config file.
+- Env vars referenced by [`headers`](#auth-headers-crop-scale) (`$NAME`) are passed into the container by name (`docker run -e NAME`), so their values stay off the command line. `storageState` files aren't mounted.
 
 ## Config File
 
@@ -140,7 +141,7 @@ const config: Config = {
 export default config
 ```
 
-Top-level config options (`engine`, `host`, `https`, `output`, `selector`, `loadTimeout`, `downloadSleep`, `browserArgs`, `headless`, `screenshotTimeout`, `docker`, `dockerImage`, `dockerPlatform`) are overridden by their corresponding CLI flags when both are specified.
+Top-level config options (`engine`, `host`, `https`, `output`, `selector`, `loadTimeout`, `downloadSleep`, `browserArgs`, `headless`, `screenshotTimeout`, `docker`, `dockerImage`, `dockerPlatform`) are overridden by their corresponding CLI flags when both are specified. `headers`, `scale`, and `storageState` can also be set top-level (config-only; no CLI flags), as defaults for every screenshot.
 
 ### Config Options
 
@@ -161,6 +162,30 @@ Top-level config options (`engine`, `host`, `https`, `output`, `selector`, `load
 | `browserArgs` | `string[]` | - | Additional browser launch args for this screenshot |
 | `headless` | `boolean` | `true` | Override headless mode for this screenshot |
 | `screenshotTimeout` | `number` | `30000` | Timeout in ms per screenshot capture |
+| `headers` | `Record<string, string>` | - | Extra HTTP headers for every request (merged over top-level `headers`); `$NAME` / `${NAME}` expand from env |
+| `scale` | `number` | `1` | Device scale factor (e.g. `2` for retina captures) |
+| `storageState` | `string` | - | Playwright storage-state JSON (cookies + `localStorage`); Playwright only |
+| `crop` | `string \| { selector, padding? }` | - | Capture only the first element matching `selector` (plus `padding` CSS px, clamped to the page) |
+
+### Auth headers, crop, scale
+
+```typescript
+const config: Config = {
+  host: 'app.example.com',
+  https: true,
+  // Sent with every request from the page (navigations and in-app `fetch`es)
+  headers: { Authorization: 'Bearer $SITE_TOKEN' },
+  scale: 2,
+  screenshots: {
+    'health-panel': { query: 'health', crop: { selector: 'section.store', padding: 16 } },
+    'treemap': { query: '', crop: '.treemap' },
+  },
+}
+```
+
+- **`headers`**: `$NAME` / `${NAME}` refs are expanded from the environment at run time; an unset var is an error (raised before any browser launches). TS/JS configs can also just read `process.env`. Header values are never logged (only names). Headers go to *every* request the page makes, including third-party origins (CDNs, fonts), so only use them on pages you trust with the token.
+- **`crop`**: the element box is measured once, after load / scroll / `preScreenshotSleep`, in document coordinates (so off-screen elements work); for screencasts the same region is used for every frame. A selector that matches nothing is an error.
+- **`scale`**: output dimensions are multiplied by it (a `crop` or viewport of `W×H` at `scale: 2` yields `2W×2H` pixels).
 
 ### Screencast Options
 
